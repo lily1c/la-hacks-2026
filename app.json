@@ -1,0 +1,10 @@
+{
+  "package_id": "com.daksha.myfirstapp",
+  "name": "My First App",
+  "version": "0.1.0",
+  "edition": "202601",
+  "min_sdk_version": "0.0.16",
+  "entrypoint": "index.html",
+  "permissions": [],
+  "supported_languages": ["en"]
+}
