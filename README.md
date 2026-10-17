@@ -1,14 +1,31 @@
 # Even Realities Glasses Project
 
-A minimal Even Hub app for Even Realities G2 glasses: tap to count, double-tap to exit.
+Even Hub app for Even Realities G2 glasses that shows live wildfire summaries to firefighters.
+It polls a backend for the latest summary (JSON) every 2 seconds and displays it on the glasses.
+If updates stop for 15 seconds, it shows a NO SIGNAL warning with the age of the last update.
+
+Backend contract: see [SUMMARY_FORMAT.md](SUMMARY_FORMAT.md).
 
 ## Run in the simulator
 
 ```sh
 npm install
+npm run mock     # fake backend on http://localhost:8787/latest
 npm run dev
 evenhub-simulator http://localhost:5173
 ```
+
+Tap to fetch immediately. Double-tap to exit.
+
+## Point at the real backend
+
+Create `.env.local`:
+
+```
+VITE_SUMMARY_URL=https://your-backend.example.com/latest
+```
+
+Also add the backend's origin to the `network` permission `whitelist` in `app.json`.
 
 ## Run on real glasses
 
