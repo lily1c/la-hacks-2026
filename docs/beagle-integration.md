@@ -15,7 +15,7 @@ Drone / compatible RTMP sender
 Cloud VM — MediaMTX
        ├─ Continuous RTMP → teammate's working Beagle Eyes / DPVO environment
        │                      └─ integrated exporter → JPEG + JSON bundles
-       └─ RTSP → CPU snapshot worker → JPEG + JSON bundles (no odometry yet)
+       └─ RTMP → headless Beagle JPEG worker → JPEG + JSON bundles (no odometry yet)
                                          │
                                   Retrying delivery worker
                                          │ multipart POST
@@ -24,7 +24,7 @@ Cloud VM — MediaMTX
                                          └─ hazard JSON with same frame_id
 ```
 
-The CPU snapshot worker and Beagle exporter are alternative bundle producers. Do not merge their records based solely on frame number or approximate wall-clock time: independent readers sample different frames. For image+odometry, use Beagle's own exporter to keep the context and actual processed image together. For later sensors/other repos, propagate the shared frame_id or define explicit synchronization rules.
+The VM uses scripts/beagle_capture.py and the isolated RTMPJpegStream from Beagle Eyes, with FFmpeg and OpenCV but without torch, DPVO, or GUI dependencies. It samples at one JPEG per second. scripts/capture_frames.py remains a separate local-file testing utility. The headless worker and full Beagle odometry exporter are alternative bundle producers. Do not merge their records based solely on frame number or approximate wall-clock time: independent readers sample different frames. For image+odometry, use Beagle's own exporter to keep the context and actual processed image together. For later sensors/other repos, propagate the shared frame_id or define explicit synchronization rules.
 
 ## Start without the drone or GPU
 
@@ -72,7 +72,7 @@ mediamtx:
   auto_start: false
 rtmp:
   mode: pull
-  url_override: "rtmp://reader:PASSWORD@VM_ADDRESS:1935/live/dji"
+  url_override: "rtmp://VM_ADDRESS:1935/live/dji?user=reader&pass=PASSWORD"
 network:
   auto_configure_static_ip: false
 ```
@@ -110,7 +110,7 @@ export AI_TOKEN=YOUR_SERVICE_TOKEN
 python integrations/beagle_eyes/frame_bridge.py --directory .runtime/frame-bundles
 ```
 
-No destination is configured and nothing is sent automatically. Failed requests retain the bundle for retry. Successful bundles remain on disk for debugging. The receiving service must durably store or enqueue the work before returning 2xx and deduplicate repeated frame_ids; delivery is at least once. One failing bundle blocks later delivery until fixed. Run one sender per directory. Add retention/quotas before long-running use because images currently accumulate on disk.
+No destination is configured and nothing is sent automatically. Failed requests retain the bundle for retry. Successful bundles remain on disk for debugging. The receiving service must durably store or enqueue the work before returning 2xx and deduplicate repeated frame_ids; delivery is at least once. Corrupt bundles are marked invalid and skipped; network failures pause delivery until retry. Run one sender per directory. Storage is bounded to 2,000 bundles or 512 MiB, with 256 MiB free-disk reserve. New frames are skipped when full; pending bundles are preserved. Delivered bundles are removed by the sender after one hour.
 
 The AI service should store its output keyed by frame_id, e.g. `{"frame_id":"…","hazards":[…]}`. A 2xx acknowledgment means accepted, not that AI inference completed. Hazard detection and result callbacks belong to the AI teammate's service and are not implemented here.
 
@@ -121,4 +121,4 @@ python -m unittest discover -s tests -p 'test_*.py'
 npm test
 ```
 
-Full DPVO inference requires the teammate's environment and drone/controller compatibility remains unverified. No VM, public publishing address, or deployed AI endpoint has been created by this integration.
+Full DPVO inference requires the teammate's environment and drone/controller compatibility remains unverified. A cloud VM has been created; application deployment and a real AI endpoint remain to be verified.

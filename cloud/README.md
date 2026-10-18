@@ -1,6 +1,6 @@
 # FireSight cloud VM deployment
 
-Prepared for project `commonthread-509207`. **These files do not mean a VM has been created.** The chosen initial machine is Ubuntu 24.04, `e2-small` (2 GiB RAM), 20 GB standard persistent disk, with a reserved external IPv4. It relays video and samples JPEGs; it does not run DPVO or an AI model. Confirm capacity against real source resolution/bitrate.
+Prepared for project `firesight-la-hacks-2026`. The VM `firesight-ingest` exists in `us-central1-a`; its observed external IP was `34.170.148.82` (not confirmed reserved). Application deployment is still pending. Do not run the provisioning script to create another VM. The chosen initial machine is Ubuntu 24.04, `e2-small` (2 GiB RAM), 20 GB standard persistent disk, with an external IPv4. It relays video and samples JPEGs; it does not run DPVO or an AI model. Confirm capacity against real source resolution/bitrate.
 
 ## Before provisioning
 
@@ -11,7 +11,7 @@ The creation script expects an existing default VPC. Set the drone sender and te
 In Google Cloud Shell, after cost approval and uploading this checkout:
 
 ```sh
-export PROJECT_ID=commonthread-509207
+export PROJECT_ID=firesight-la-hacks-2026
 export DRONE_CIDR=REPLACE_WITH_PUBLISHER_PUBLIC_IP/32
 export TEAM_CIDR=REPLACE_WITH_TEAM_PUBLIC_IP/32
 bash cloud/provision.sh
@@ -34,7 +34,7 @@ sudo docker compose -f cloud/compose.yaml ps
 sudo docker compose -f cloud/compose.yaml logs --tail=30 snapshots
 ```
 
-The relay and worker restart after reboot through Docker's restart policy. Data lives under `cloud/data/bundles` on the persistent boot disk. It is not backed up. Start with a short test: saved frames currently accumulate without a retention policy, so monitor disk usage and stop ingestion before the disk fills. Default HLS/browser playback is disabled in this deployment; use authenticated RTSP in VLC/OpenCV.
+The relay and worker restart after reboot through Docker's restart policy. Data lives under `cloud/data/bundles` on the persistent boot disk. It is not backed up. Storage is bounded to 2,000 bundles or 512 MiB with a 256 MiB free-space reserve. Pending bundles are retained; new frames are skipped when full. The sender deletes acknowledged bundles after one hour. Default HLS/browser playback is disabled in this deployment; use authenticated RTSP in VLC/OpenCV.
 
 ## Addresses to give the team
 
@@ -42,10 +42,10 @@ Read `cloud/.env` privately on the VM. Substitute its credentials below; placeho
 
 ```text
 Drone publish:
-rtmp://drone:PUBLISH_PASSWORD@VM_PUBLIC_IP:1935/live/dji
+rtmp://VM_PUBLIC_IP:1935/live/dji?user=drone&pass=PUBLISH_PASSWORD
 
 Beagle Eyes / AI live read:
-rtmp://reader:READ_PASSWORD@VM_PUBLIC_IP:1935/live/dji
+rtmp://VM_PUBLIC_IP:1935/live/dji?user=reader&pass=READ_PASSWORD
 rtsp://reader:READ_PASSWORD@VM_PUBLIC_IP:8554/live/dji
 ```
 

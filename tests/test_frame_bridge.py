@@ -13,6 +13,14 @@ spec.loader.exec_module(bridge)
 
 
 class FrameBridgeTests(unittest.TestCase):
+    def test_full_queue_preserves_pending_and_skips_new_frames(self):
+        with tempfile.TemporaryDirectory() as directory:
+            writer = bridge.FrameBridge(directory)
+            writer.max_bundles = 1
+            first = writer.save_jpeg(b'\xff\xd8test\xff\xd9', 1, 1, 1)
+            self.assertIsNone(writer.save_jpeg(b'\xff\xd8test\xff\xd9', 1, 1, 2))
+            self.assertEqual([p.name for p in bridge.bundles(directory)], [first['frame_id']])
+
     def test_atomic_pair_and_hash(self):
         with tempfile.TemporaryDirectory() as directory:
             writer = bridge.FrameBridge(directory)

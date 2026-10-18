@@ -1,6 +1,6 @@
 # FireSight — LA Hacks 2026
 
-Cloud deployment: [VM setup](cloud/README.md). QNX migration: [target boundary and requirements](qnx/README.md). The cloud package runs the relay and snapshot worker independently of a laptop; provisioning still requires Google Cloud access and cost approval.
+Cloud deployment: [VM setup](cloud/README.md). QNX migration: [target boundary and requirements](qnx/README.md). The cloud package runs the relay and snapshot worker independently of a laptop; the VM exists and deployment is pending verification.
 
 For saving snapshots, pairing them with JSON, and integrating with `beagle_eyes`, see [the integration guide](docs/beagle-integration.md). It includes a live/file snapshot worker, an upstream adapter, and retrying multipart delivery to an AI endpoint.
 

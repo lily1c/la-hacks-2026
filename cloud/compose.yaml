@@ -19,11 +19,11 @@ services:
     depends_on:
       - relay
     environment:
-      STREAM_URL: rtsp://reader:${READ_PASSWORD:?Run cloud/configure.py first}@relay:8554/live/dji
+      STREAM_URL: rtmp://relay:1935/live/dji?user=reader&pass=${READ_PASSWORD:?Run cloud/configure.py first}
       FRAME_DIR: /data/bundles
     volumes:
       - ./data:/data
-    command: ["python", "scripts/capture_frames.py", "--interval", "1"]
+    command: ["python", "scripts/beagle_capture.py"]
     logging:
       options:
         max-size: "5m"

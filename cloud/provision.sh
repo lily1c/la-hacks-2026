@@ -4,9 +4,13 @@ set -euo pipefail
 : "${PROJECT_ID:?Set PROJECT_ID}"
 : "${DRONE_CIDR:?Set the drone publisher public IP/CIDR, e.g. 203.0.113.1/32}"
 : "${TEAM_CIDR:?Set the AI teammate public IP/CIDR}"
-REGION="${REGION:-us-west1}"
-ZONE="${ZONE:-us-west1-b}"
+REGION="${REGION:-us-central1}"
+ZONE="${ZONE:-us-central1-a}"
 VM_NAME="${VM_NAME:-firesight-ingest}"
+if gcloud compute instances describe "$VM_NAME" --zone="$ZONE" --project="$PROJECT_ID" >/dev/null 2>&1; then
+  echo 'VM already exists. Use cloud/README.md deployment steps; refusing duplicate provisioning.' >&2
+  exit 1
+fi
 gcloud services enable compute.googleapis.com --project="$PROJECT_ID"
 gcloud compute addresses create "$VM_NAME-ip" --region="$REGION" --project="$PROJECT_ID"
 VM_IP="$(gcloud compute addresses describe "$VM_NAME-ip" --region="$REGION" --project="$PROJECT_ID" --format='value(address)')"
