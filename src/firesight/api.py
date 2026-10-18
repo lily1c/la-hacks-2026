@@ -3,6 +3,7 @@ import asyncio
 from contextlib import asynccontextmanager, suppress
 from firesight.live import BundleWatcher, RemoteBeagleWatcher, timestamp
 import time
+from firesight.push import PushReceiver
 import hmac
 from datetime import datetime, timezone
 from pydantic import BaseModel, Field
@@ -28,7 +29,7 @@ async def publish_live(alert):
 
 @asynccontextmanager
 async def lifespan(app):
-    app.state.watcher = (RemoteBeagleWatcher(os.environ["BEAGLE_URL"], os.getenv("BEAGLE_EXPORT_TOKEN", ""), analyze_frame, publish_live, frame_lock)
+    app.state.watcher = (PushReceiver(analyze_frame, publish_live, frame_lock) if os.getenv("INGEST_MODE") == "push" else RemoteBeagleWatcher(os.environ["BEAGLE_URL"], os.getenv("BEAGLE_EXPORT_TOKEN", ""), analyze_frame, publish_live, frame_lock)
                          if os.getenv("BEAGLE_URL") else BundleWatcher(os.getenv("FRAME_DIR"), analyze_frame, publish_live, frame_lock))
     task = asyncio.create_task(app.state.watcher.run())
     try:
@@ -50,7 +51,7 @@ app.add_middleware(
 
 @app.middleware("http")
 async def protect_public_writes(request: Request, call_next):
-    if os.getenv("PUBLIC_DEPLOYMENT") == "true" and request.method == "POST" and request.url.path in ("/frame", "/video", "/latest"):
+    if os.getenv("PUBLIC_DEPLOYMENT") == "true" and request.method == "POST" and request.url.path in ("/frame", "/video", "/latest", "/ingest/beagle"):
         token = os.getenv("INGEST_TOKEN", "")
         if not token or not hmac.compare_digest(request.headers.get("Authorization", ""), "Bearer " + token):
             return JSONResponse({"detail": "A valid ingest token is required"}, status_code=401)
@@ -205,3 +206,23 @@ async def upload_frame(request: Request):
     except (ValueError, cv2.error) as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     return JSONResponse(content=alert)
+
+
+@app.post("/ingest/beagle")
+async def ingest_beagle(request: Request):
+    token = os.getenv("INGEST_TOKEN", "")
+    if not token or not hmac.compare_digest(request.headers.get("Authorization", ""), "Bearer " + token):
+        raise HTTPException(401, "Invalid ingest token")
+    if not isinstance(app.state.watcher, PushReceiver):
+        raise HTTPException(503, "Set INGEST_MODE=push to enable Beagle ingestion")
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > 12 * 1024 * 1024:
+            raise HTTPException(413, "Bundle exceeds 12 MiB")
+    try:
+        import json
+        result = app.state.watcher.accept(json.loads(body))
+    except (ValueError, KeyError, TypeError, AttributeError) as error:
+        raise HTTPException(422, "Invalid frame bundle: " + str(error)) from error
+    return JSONResponse(result, status_code=202 if result["accepted"] else 200)
