@@ -54,7 +54,7 @@ app.add_middleware(
 
 @app.middleware("http")
 async def protect_public_writes(request: Request, call_next):
-    if os.getenv("PUBLIC_DEPLOYMENT") == "true" and request.method == "POST" and request.url.path in ("/frame", "/video", "/latest", "/ingest/beagle"):
+    if os.getenv("PUBLIC_DEPLOYMENT") == "true" and request.method == "POST" and request.url.path in ("/frame", "/video", "/latest", "/ingest/beagle", "/analyze"):
         token = os.getenv("INGEST_TOKEN", "")
         if not token or not hmac.compare_digest(request.headers.get("Authorization", ""), "Bearer " + token):
             return JSONResponse({"detail": "A valid ingest token is required"}, status_code=401)
@@ -96,6 +96,8 @@ async def live_status():
 
 @app.get("/latest")
 async def get_latest():
+    if os.getenv("G2_DELIVERY_ENABLED", "false").lower() != "true":
+        return Response(status_code=204, headers={"X-FireSight-Delivery": "paused"})
     async with alert_lock:
         try:
             expired = latest_alert is None or not 0 <= time.time() - timestamp(latest_alert["timestamp"]) <= 30
@@ -191,6 +193,7 @@ async def upload_video(video: UploadFile = File(...), sample_seconds: float = 1.
     return JSONResponse(content=alert)
 
 
+@app.post("/analyze")
 @app.post("/frame")
 async def upload_frame(request: Request):
     """Analyze one JPEG/PNG frame; the drone client calls this once per second."""
@@ -224,8 +227,9 @@ async def upload_frame(request: Request):
         # Preserve frame order when analysis takes longer than the send interval.
         async with frame_lock:
             alert = await asyncio.to_thread(analyze_frame, image_bytes, image_type)
-            async with alert_lock:
-                latest_alert = alert
+            if request.url.path != "/analyze":
+                async with alert_lock:
+                    latest_alert = alert
     except GeminiConfigurationError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
     except GeminiRequestError as error:
@@ -235,7 +239,7 @@ async def upload_frame(request: Request):
     return JSONResponse(content=alert)
 
 
-@app.post("/ingest/beagle")
+@app.post("/ingest/beagle", "/analyze")
 async def ingest_beagle(request: Request):
     token = os.getenv("INGEST_TOKEN", "")
     if not token or not hmac.compare_digest(request.headers.get("Authorization", ""), "Bearer " + token):
@@ -263,3 +267,17 @@ async def phone_capture():
 @app.get("/phone.js", include_in_schema=False)
 async def phone_script():
     return FileResponse(Path(__file__).parent / "dashboard" / "phone.js", media_type="text/javascript")
+
+
+@app.get("/ai-test", include_in_schema=False)
+async def ai_test_page():
+    return FileResponse(Path(__file__).parent / "dashboard" / "ai-test.html")
+
+
+@app.get("/analysis/status")
+async def analysis_status():
+    from firesight.detector import selected_detector
+    from firesight.gemini import DEFAULT_MODEL
+    return {"detector": selected_detector(), "gemini_key_configured": bool(os.getenv("GEMINI_API_KEY", "").strip()),
+            "model": os.getenv("GEMINI_MODEL", DEFAULT_MODEL),
+            "glasses_delivery_enabled": os.getenv("G2_DELIVERY_ENABLED", "false").lower() == "true"}
