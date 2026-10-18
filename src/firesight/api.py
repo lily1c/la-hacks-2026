@@ -15,6 +15,7 @@ import cv2
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
 
 from firesight.alerts import validate_alert
 from firesight.mapview import render_map
@@ -76,6 +77,10 @@ frame_lock = asyncio.Lock()
 @app.get("/", include_in_schema=False)
 async def dashboard():
     return FileResponse(Path(__file__).parent / "dashboard" / "index.html")
+
+
+# Videos and other static media shown on the dashboard.
+app.mount("/media", StaticFiles(directory=Path(__file__).parent / "dashboard" / "media", check_dir=False), name="media")
 
 
 @app.get("/health")
