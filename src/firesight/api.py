@@ -239,7 +239,7 @@ async def upload_frame(request: Request):
     return JSONResponse(content=alert)
 
 
-@app.post("/ingest/beagle", "/analyze")
+@app.post("/ingest/beagle")
 async def ingest_beagle(request: Request):
     token = os.getenv("INGEST_TOKEN", "")
     if not token or not hmac.compare_digest(request.headers.get("Authorization", ""), "Bearer " + token):
