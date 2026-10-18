@@ -1,4 +1,3 @@
-
 const $=id=>document.getElementById(id);const apiBase=location.port==='8792'?'http://127.0.0.1:8790':'';let map,glMod,sim=false,marker,trail=[],tick=0,previous=0,globeProjection=false,imageryEnabled=false;const center=[-118.4452,34.0722];const empty={type:'FeatureCollection',features:[]};
 const GLOBE_ENTER_ZOOM=2,GLOBE_EXIT_ZOOM=3;
 function updateProjection(){
@@ -153,7 +152,7 @@ map.addSource('scenario',{type:'geojson',data:empty});map.addLayer({id:'scenario
 map.addSource('people',{type:'geojson',data:empty});map.addLayer({id:'people',source:'people',type:'circle',paint:{'circle-radius':6,'circle-color':'#22c55e','circle-stroke-width':2,'circle-stroke-color':'#ffffff'}});
 if(latestTelemetry)updateLiveMapFromTelemetry(latestTelemetry);
 });
-function scenario(){if(!map.isStyleLoaded()){$('mapInfo').textContent='Map still loading; try again shortly.';return;}sim=!sim;trail=[];tick=0;marker?.remove();marker=null;map.getSource('path').setData(empty);$('demo').textContent=sim?'Stop scenario':'Start scenario';$('demo').classList.toggle('active',sim);$('mapTitle').textContent=sim?'Wildfire / Simulation':'UCLA / Field map';$('mapMode').textContent=sim?'Synthetic fire & flight':'Basemap · No GPS connected';$('mapInfo').textContent=sim?'Orange: invented fire zone · moving icon: simulated drone':'Real map. Awaiting geographic telemetry.';const pts=[[-.0007,-.0003],[-.0005,.0004],[.0001,.0006],[.0006,.0002],[.0004,-.0004],[-.0007,-.0003]].map(p=>[center[0]+p[0],center[1]+p[1]]);map.getSource('scenario').setData(sim?{type:'Feature',properties:{},geometry:{type:'Polygon',coordinates:[pts]}}:empty);if(sim){marker=new gl.Marker({element:createDroneMarkerElement('Simulated drone')}).setLngLat(center).addTo(map);}else if(latestTelemetry){updateLiveMapFromTelemetry(latestTelemetry);}}
+function scenario(){if(!map.isStyleLoaded()){$('mapInfo').textContent='Map still loading; try again shortly.';return;}sim=!sim;trail=[];tick=0;marker?.remove();marker=null;map.getSource('path').setData(empty);$('demo').textContent=sim?'Stop scenario':'Start scenario';$('demo').classList.toggle('active',sim);$('mapTitle').textContent=sim?'Wildfire / Simulation':'UCLA / Field map';$('mapMode').textContent=globeProjection?'Globe view · zoom in for field detail':imageryEnabled?'ArcGIS World Imagery · satellite roofs':sim?'Synthetic fire & flight':'Basemap · No GPS connected';$('mapInfo').textContent=sim?'Orange: invented fire zone · moving icon: simulated drone':'Real map. Awaiting geographic telemetry.';const pts=[[-.0007,-.0003],[-.0005,.0004],[.0001,.0006],[.0006,.0002],[.0004,-.0004],[-.0007,-.0003]].map(p=>[center[0]+p[0],center[1]+p[1]]);map.getSource('scenario').setData(sim?{type:'Feature',properties:{},geometry:{type:'Polygon',coordinates:[pts]}}:empty);if(sim){marker=new gl.Marker({element:createDroneMarkerElement('Simulated drone')}).setLngLat(center).addTo(map);}else if(latestTelemetry){updateLiveMapFromTelemetry(latestTelemetry);}}
 $('demo').onclick=scenario;$('tilt').onclick=()=>map.easeTo({pitch:map.getPitch()>20?0:58});$('mapView').onclick=()=>map.flyTo({center,zoom:16,pitch:58,bearing:-28});
 function updateMapInfo(){$('mapInfo').textContent=imageryEnabled?'ArcGIS World Imagery · satellite roofs':sim?'Orange: invented fire zone · moving icon: simulated drone':'Real map. Awaiting geographic telemetry.';}
 function setImagery(enabled){if(!map?.getLayer('arcgis-imagery'))return;imageryEnabled=enabled;map.setLayoutProperty('arcgis-imagery','visibility',enabled?'visible':'none');map.setLayoutProperty('buildings','visibility',enabled?'none':'visible');map.setLayoutProperty('building-edges','visibility',enabled?'none':'visible');$('imagery').setAttribute('aria-pressed',String(enabled));$('imagery').textContent=enabled?'3D buildings':'Satellite roofs';updateProjection();updateMapInfo();}
@@ -168,34 +167,5 @@ if(!trail.length||Math.hypot(p[0]-trail.at(-1)[0],p[1]-trail.at(-1)[1])>.00001){
 const path=[...trail,p];if(path.length>1)map.getSource('path').setData({type:'Feature',properties:{},geometry:{type:'LineString',coordinates:path}});
 }requestAnimationFrame(animate);}requestAnimationFrame(animate);
 }catch{$('mapInfo').textContent='Map unavailable. Internet access and WebGL required.';}
-async function poll(){try{const [liveR,g2R]=await Promise.all([fetch(`${apiBase}/live`,{signal:AbortSignal.timeout(3000)}),fetch(`${apiBase}/g2/status`,{signal:AbortSignal.timeout(3000)})]);if(!liveR.ok||!g2R.ok)throw Error();const live=await liveR.json(),g2=await g2R.json();$('apiStatus').textContent=wsConnected?'Backend + Beagle WS live':'Backend connected';const fresh=live.fresh&&live.snapshot;
-if(live.beagle_host&&!urlParams.get('beagle')&&!localStorage.getItem('firesight_beagle_host')&&live.beagle_host!==beagleHost){
-  beagleHost=live.beagle_host;$('beagleHost').value=beagleHost;if(!wsConnected)connectBeagleWS(beagleHost);
-}
-const alertObj=live.snapshot?.alert;
-if(alertObj){
-  $('hazardState').textContent=alertObj.priority==='critical'?'CRITICAL FIRE':alertObj.priority==='warning'?'WARNING':'Clear';
-  $('cameraFoot').textContent=`${alertObj.headline} · ${live.processed||0} analyzed`;
-}else{
-  $('hazardState').textContent=fresh?'Analyzing...':'Standby';
-}
-if(!wsConnected){
-  $('cameraState').textContent=fresh?'Fresh frame':'Waiting';
-  $('camera').hidden=!fresh;
-  $('cameraEmpty').hidden=!!fresh;
-  if(fresh){
-    $('camera').src=live.snapshot.image;
-    const telem=live.snapshot.metadata?.telemetry;
-    if(telem){
-      renderTelemetryUI(telem,'Synced');
-    }else{
-      const xyz=live.snapshot.metadata?.context?.latest_keyframe_pose?.translation;
-      $('position').textContent=xyz?.length===3?xyz.map(v=>Number(v).toFixed(2)).join(' / '):'— / — / —';
-      $('frameAge').textContent='Fresh';
-    }
-  }else if(Date.now()-lastWsTelemetryTime>5000){
-    $('position').textContent='— / — / —';
-    $('frameAge').textContent='Waiting';
-  }
-}
-const confirmed=g2.fresh&&g2.report?.status==='sdk_accepted';$('g2State').textContent=confirmed?'SDK accepted':'Unconfirmed';$('reportAge').textContent=confirmed?'Fresh report':'Unconfirmed';$('g2Text').textContent=g2.fresh&&g2.report?g2.report.rendered_text||'Display cleared':alertObj?`[Outgoing Alert — ${alertObj.priority.toUpperCase()}]\n${alertObj.headline}\n${(alertObj.instructions||[]).join('\n')}\n\n(Waiting for G2 phone SDK ack)`:'No fresh display report.\n\nWaiting for the phone app.';$('links').innerHTML=`Beagle WS: <b>${wsConnected?'LIVE ('+beagleHost+')':'reconnecting ('+beagleHost+')'}</b><br>FireSight AI: ${fresh?'analyzing ('+(live.processed||0)+' frames)':live.state||'waiting'} · G2: ${confirmed?'SDK accepted':'unconfirmed'}`;}catch{$('apiStatus').textContent=wsConnected?'Beagle WS live (API offline)':'Backend unavailable';if(!wsConnected){$('camera').hidden=true;$('cameraEmpty').hidden=false;$('cameraState').textContent='Offline';$('position').textContent='— / — / —';$('frameAge').textContent='Unavailable';}$('g2Text').textContent='Backend unavailable. Display state unconfirmed.';$('g2State').textContent='Unconfirmed';$('reportAge').textContent='Unconfirmed';$('links').innerHTML=`Beagle WS: <b>${wsConnected?'LIVE ('+beagleHost+')':'offline'}</b><br>Backend API: unavailable`;}setTimeout(poll,2000);}poll();
+async function poll(){try{const [liveR,g2R]=await Promise.all([fetch(`${apiBase}/live`,{signal:AbortSignal.timeout(3000)}),fetch(`${apiBase}/g2/status`,{signal:AbortSignal.timeout(3000)})]);if(!liveR.ok||!g2R.ok)throw Error();const live=await liveR.json(),g2=await g2R.json();$('apiStatus').textContent='Backend connected';const fresh=live.fresh&&live.snapshot;$('cameraState').textContent=fresh?'Fresh frame':'Waiting';$('camera').hidden=!fresh;$('cameraEmpty').hidden=!!fresh;if(fresh){$('camera').src=live.snapshot.image;const xyz=live.snapshot.metadata.context?.latest_keyframe_pose?.translation;$('position').textContent=xyz?.length===3?xyz.map(v=>Number(v).toFixed(2)).join(' / '):'— / — / —';$('frameAge').textContent='Fresh';}else{$('position').textContent='— / — / —';$('frameAge').textContent='Waiting';}const confirmed=g2.fresh&&g2.report?.status==='sdk_accepted';$('g2State').textContent=confirmed?'SDK accepted':'Unconfirmed';$('reportAge').textContent=confirmed?'Fresh report':'Unconfirmed';$('g2Text').textContent=g2.fresh&&g2.report?g2.report.rendered_text||'Display cleared':'No fresh display report.\n\nWaiting for the phone app.';$('links').textContent=`Drone receiver: ${fresh?'fresh frames':live.configured?'waiting':'not configured'} · G2 phone: ${confirmed?'SDK accepted':'unconfirmed'}`;}catch{$('apiStatus').textContent='Backend unavailable';$('camera').hidden=true;$('cameraEmpty').hidden=false;$('g2Text').textContent='Backend unavailable. Display state unconfirmed.';$('g2State').textContent='Unconfirmed';$('cameraState').textContent='Offline';$('position').textContent='— / — / —';$('frameAge').textContent='Unavailable';$('reportAge').textContent='Unconfirmed';$('links').textContent='Device status unavailable';}setTimeout(poll,2500);}poll();
+async function pollMap(){try{const r=await fetch(`${apiBase}/latest`,{signal:AbortSignal.timeout(3000)});const a=r.status===204?null:await r.json();$('g2map').hidden=!a?.map_url;if(a?.map_url)$('g2map').src=new URL(a.map_url,apiBase||location.origin).href;}catch{$('g2map').hidden=true;}setTimeout(pollMap,2500);}pollMap();

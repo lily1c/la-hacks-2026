@@ -7,5 +7,4 @@ __pycache__/
 
 build/
 dist/
-# Beagle Eyes (managed by install_beagle_eyes.sh)
 vendor/beagle_eyes/
