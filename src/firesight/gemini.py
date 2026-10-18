@@ -37,7 +37,10 @@ def analyze_image_with_gemini(image_bytes, media_type):
     """Send one frame to Gemini's multimodal API and return a glasses alert."""
     api_key = os.getenv("GEMINI_API_KEY", "").strip()
     if not api_key:
-        raise GeminiConfigurationError("Gemini detector requires GEMINI_API_KEY")
+        raise GeminiConfigurationError(
+            "Gemini image detection requires GEMINI_API_KEY. Set the key in your "
+            "environment before running with FIRESIGHT_DETECTOR=gemini."
+        )
     if not image_bytes:
         raise ValueError("Frame image is empty")
     if len(image_bytes) > MAX_IMAGE_BYTES:
