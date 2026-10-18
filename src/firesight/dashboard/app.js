@@ -21,8 +21,38 @@ function voToLngLat(x,z){
   return [center[0]+dLng,center[1]+dLat];
 }
 
+let geoTrail=[],geoOriginKey='';
+const geoNote=g=>{const tf=g.transform_v_to_e||{};return `${g.origin?.source||'?'} origin · scale ${tf.scale_status||'?'}${tf.calibrated?'':' (unscaled)'}`;};
+
+// Geo-referenced path: the Beagle Eyes gps_tf transform supplies lat/lon, so no local guessing is needed.
+function updateLiveMapFromGeo(t,g){
+  const lla=g.drone.lla,lngLat=[lla[1],lla[0]];
+  const key=`${g.origin.lat},${g.origin.lon}`;
+  if(key!==geoOriginKey){geoOriginKey=key;geoTrail=[];map.jumpTo({center:[g.origin.lon,g.origin.lat],zoom:18});}
+  if(!marker){
+    marker=new glMod.Marker({element:createDroneMarkerElement('Beagle Eyes drone')}).setLngLat(lngLat).addTo(map);
+  }else{
+    marker.setLngLat(lngLat);
+  }
+  const sketch=marker.getElement().querySelector('.drone-sketch');
+  if(sketch&&g.drone.heading_true_deg!=null)sketch.style.transform=`rotate(${g.drone.heading_true_deg}deg)`;
+  const last=geoTrail[geoTrail.length-1];
+  if(!last||Math.abs(last[0]-lngLat[0])+Math.abs(last[1]-lngLat[1])>1e-7){geoTrail.push(lngLat);if(geoTrail.length>3000)geoTrail.shift();}
+  if(geoTrail.length>1&&map.getSource('path'))map.getSource('path').setData({type:'Feature',properties:{},geometry:{type:'LineString',coordinates:geoTrail}});
+  const dets=Array.isArray(g.detections)?g.detections:[];
+  if(map.getSource('people')){
+    map.getSource('people').setData({type:'FeatureCollection',features:dets.filter(d=>Array.isArray(d.lla)).map(d=>({
+      type:'Feature',properties:{id:d.id,distance:d.range_m},geometry:{type:'Point',coordinates:[d.lla[1],d.lla[0]]}}))});
+  }
+  $('mapTitle').textContent='Beagle Eyes / Geo-referenced';
+  $('mapMode').textContent=`DPVO ${t.initialized?'Tracking':'Initializing'} · ${geoNote(g)}`;
+  const e=g.drone.enu;
+  $('mapInfo').textContent=`${lla[0].toFixed(6)}, ${lla[1].toFixed(6)} · ENU ${e.map(v=>v.toFixed(1)).join(', ')}m · AGL ${g.drone.height_agl_m}m · People: ${dets.length}`+(g.transform_v_to_e?.calibrated?'':' · distances unscaled');
+}
+
 function updateLiveMapFromTelemetry(t){
   if(sim||!map||!map.isStyleLoaded()||!glMod)return;
+  if(t?.geo?.drone?.lla&&t.geo.origin&&t.initialized){updateLiveMapFromGeo(t,t.geo);return;}
   const pos=t?.pose?.position;
   if(!Array.isArray(pos)||pos.length<3)return;
   const lngLat=voToLngLat(pos[0],pos[2]);
@@ -63,7 +93,8 @@ function renderTelemetryUI(t,sourceLabel='Live WS'){
   if(!t)return;
   latestTelemetry=t;
   const xyz=t.pose?.position;
-  $('position').textContent=Array.isArray(xyz)&&xyz.length===3?xyz.map(v=>(Number(v)>=0?'+':'')+Number(v).toFixed(2)).join(' / ')+' m':'— / — / —';
+  const enu=t.geo?.drone?.enu;
+  $('position').textContent=Array.isArray(enu)&&enu.length===3?`E ${enu[0].toFixed(1)} / N ${enu[1].toFixed(1)} / U ${enu[2].toFixed(1)} m`:Array.isArray(xyz)&&xyz.length===3?xyz.map(v=>(Number(v)>=0?'+':'')+Number(v).toFixed(2)).join(' / ')+' m':'— / — / —';
   const fps=t.fps!=null?Number(t.fps).toFixed(1):'—';
   const voHz=t.vo_hz!=null?Number(t.vo_hz).toFixed(1):fps;
   $('voRate').textContent=`${fps} FPS · ${voHz} Hz`;
@@ -72,7 +103,8 @@ function renderTelemetryUI(t,sourceLabel='Live WS'){
   const dets=Array.isArray(t.detections_3d)?t.detections_3d:[];
   if(dets.length>0){
     const closest=dets.reduce((a,b)=>(a.distance_m??999)<=(b.distance_m??999)?a:b);
-    $('peopleCount').textContent=`${dets.length} (${Number(closest.distance_m||0).toFixed(1)}m)`;
+    const gd=Array.isArray(t.geo?.detections)?t.geo.detections.reduce((a,b)=>(a.range_m??999)<=(b.range_m??999)?a:b,{}):{};
+    $('peopleCount').textContent=gd.range_m!=null?`${dets.length} (${gd.range_m}m @ ${gd.bearing_true_deg}°)`:`${dets.length} (${Number(closest.distance_m||0).toFixed(1)}m)`;
   }else{
     $('peopleCount').textContent='0 detected';
   }
