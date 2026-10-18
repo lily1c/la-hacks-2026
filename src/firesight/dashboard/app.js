@@ -179,7 +179,7 @@ for(const l of map.getStyle().layers){let prop,value;if(l.type==='background'){p
 function applyLook(){for(const [id,prop,before,after] of original)map.setPaintProperty(id,prop,illustrated?after:before);map.setPaintProperty('buildings','fill-extrusion-color',illustrated?['interpolate',['linear'],['coalesce',['get','render_height'],3],0,'#f4e3c8',25,'#dbc9aa',70,'#b7cbbb']:'#b7bba9');document.body.classList.toggle('illustrated',illustrated);$('look').textContent=illustrated?'Style: illustrated':'Style: standard';$('look').setAttribute('aria-pressed',String(illustrated));}
 $('look').onclick=()=>{illustrated=!illustrated;applyLook();};applyLook();
 map.addSource('scenario',{type:'geojson',data:empty});map.addLayer({id:'scenario',source:'scenario',type:'fill',paint:{'fill-color':'#ed6a3b','fill-opacity':.45}});map.addSource('path',{type:'geojson',data:empty});map.addLayer({id:'path',source:'path',type:'line',layout:{'line-cap':'round','line-join':'round'},paint:{'line-color':'#c47d52','line-width':2.5,'line-opacity':.8}});
-map.addSource('people',{type:'geojson',data:empty});map.addLayer({id:'people',source:'people',type:'circle',paint:{'circle-radius':6,'circle-color':'#22c55e','circle-stroke-width':2,'circle-stroke-color':'#ffffff'}});
+map.addSource('people',{type:'geojson',data:empty});map.addLayer({id:'people',source:'people',type:'circle',paint:{'circle-radius':6,'circle-color':'#1f2937','circle-stroke-width':2,'circle-stroke-color':'#ffffff'}});
 if(latestTelemetry)updateLiveMapFromTelemetry(latestTelemetry);
 });
 function scenario(){if(!map.isStyleLoaded()){$('mapInfo').textContent='Map still loading; try again shortly.';return;}sim=!sim;trail=[];tick=0;marker?.remove();marker=null;map.getSource('path').setData(empty);$('demo').textContent=sim?'Stop scenario':'Start scenario';$('demo').classList.toggle('active',sim);$('mapTitle').textContent=sim?'Wildfire / Simulation':'UCLA / Field map';$('mapMode').textContent=sim?'Synthetic fire & flight':'Basemap · No GPS connected';$('mapInfo').textContent=sim?'Orange: invented fire zone · moving icon: simulated drone':'Real map. Awaiting geographic telemetry.';const pts=[[-.0007,-.0003],[-.0005,.0004],[.0001,.0006],[.0006,.0002],[.0004,-.0004],[-.0007,-.0003]].map(p=>[center[0]+p[0],center[1]+p[1]]);map.getSource('scenario').setData(sim?{type:'Feature',properties:{},geometry:{type:'Polygon',coordinates:[pts]}}:empty);if(sim){marker=new gl.Marker({element:createDroneMarkerElement('Simulated drone')}).setLngLat(center).addTo(map);}else if(latestTelemetry){updateLiveMapFromTelemetry(latestTelemetry);}}
@@ -227,10 +227,16 @@ if(!wsConnected){
 const confirmed=g2.fresh&&g2.report?.status==='sdk_accepted';$('g2State').textContent=confirmed?'SDK accepted':'Unconfirmed';$('reportAge').textContent=confirmed?'Fresh report':'Unconfirmed';$('g2Text').textContent=g2.fresh&&g2.report?g2.report.rendered_text||'Display cleared':alertObj?`[Outgoing Alert — ${alertObj.priority.toUpperCase()}]\n${alertObj.headline}\n${(alertObj.instructions||[]).join('\n')}\n\n(Waiting for G2 phone SDK ack)`:'No fresh display report.\n\nWaiting for the phone app.';$('links').innerHTML=`Beagle WS: <b>${wsConnected?'LIVE ('+beagleHost+')':'reconnecting ('+beagleHost+')'}</b><br>FireSight AI: ${fresh?'analyzing ('+(live.processed||0)+' frames)':live.state||'waiting'} · G2: ${confirmed?'SDK accepted':'unconfirmed'}`;}catch{$('apiStatus').textContent=wsConnected?'Beagle WS live (API offline)':'Backend unavailable';if(!wsConnected){$('camera').hidden=true;$('cameraEmpty').hidden=false;$('cameraState').textContent='Offline';$('position').textContent='— / — / —';$('frameAge').textContent='Unavailable';}$('g2Text').textContent='Backend unavailable. Display state unconfirmed.';$('g2State').textContent='Unconfirmed';$('reportAge').textContent='Unconfirmed';$('links').innerHTML=`Beagle WS: <b>${wsConnected?'LIVE ('+beagleHost+')':'offline'}</b><br>Backend API: unavailable`;}setTimeout(poll,2000);}poll();
 
 // ---- Gemini annotations: operator prompt -> map overlays (served by /annotations) ----
-const ANN_COLORS={critical:'#d93025',warning:'#f08a24',info:'#2b7de9'};
-const ANN_PRESETS=[['Car crash','Car crashes or collisions, and the road area they affect'],['Fire & smoke','Visible flames or smoke and the area they cover'],['Blocked road','Roads blocked by vehicles, debris or crowds'],['Vehicles','Every car, truck and bus'],['Trees','Trees and dense vegetation'],['People','People who appear to be in danger or injured']];
-let annData=null,annHidden=new Set(),annDirty=false,annLayersReady=false;
-const annColorExpr=['match',['get','severity'],'critical',ANN_COLORS.critical,'warning',ANN_COLORS.warning,ANN_COLORS.info];
+// Colour = kind (what it is). Outline/size = severity. Gemini may invent new kinds; each gets a stable colour.
+const ANN_PRESETS=[['Car crash','Car crashes or collisions, and the road area they affect'],['Fire & smoke','Visible flames or smoke and the area they cover'],['Blocked road','Roads blocked by vehicles, debris or crowds'],['Vehicles','Every car, truck and bus'],['Trees','Trees and dense vegetation'],['People','People who appear to be in danger or injured'],['People + cars','Mark every person and every car separately']];
+const ANN_KIND_COLORS={person:'#e5484d',vehicle:'#3b82f6',tree:'#16a34a',incident:'#f97316',hazard_area:'#a855f7',road_blockage:'#eab308',structure:'#78716c',other:'#06b6d4'};
+const ANN_EXTRA_COLORS=['#ec4899','#14b8a6','#84cc16','#f43f5e','#6366f1','#d97706','#0ea5e9','#c026d3'];
+const BEAGLE_KEY='__beagle_people',BEAGLE_COLOR='#1f2937';
+const annKindColor=k=>ANN_KIND_COLORS[k]||ANN_EXTRA_COLORS[[...k].reduce((h,c)=>(h*31+c.charCodeAt(0))>>>0,7)%ANN_EXTRA_COLORS.length];
+const annKindName=k=>k.replace(/_/g,' ');
+let annData=null,annLayersReady=false,annHidden=new Set();
+try{annHidden=new Set(JSON.parse(localStorage.getItem('ann_hidden')||'[]'));}catch{}
+const annSaveHidden=()=>{try{localStorage.setItem('ann_hidden',JSON.stringify([...annHidden]));}catch{}};
 function annSetup(){
   const presets=$('annPresets');
   for(const [name,text] of ANN_PRESETS){const b=document.createElement('button');b.type='button';b.textContent=name;b.onclick=()=>{$('annPrompt').value=text;annPush({prompt:text});};presets.append(b);}
@@ -250,19 +256,21 @@ async function annRun(){
 function annEnsureLayers(){
   if(annLayersReady||!map||!map.isStyleLoaded())return annLayersReady;
   const empty={type:'FeatureCollection',features:[]};
+  const weight=['match',['get','severity'],'critical',4,'warning',3,2];
   map.addSource('ann-areas',{type:'geojson',data:empty});map.addSource('ann-points',{type:'geojson',data:empty});
-  map.addLayer({id:'ann-fill',source:'ann-areas',type:'fill',paint:{'fill-color':annColorExpr,'fill-opacity':.28}});
-  map.addLayer({id:'ann-line',source:'ann-areas',type:'line',paint:{'line-color':annColorExpr,'line-width':2.5}});
-  map.addLayer({id:'ann-pt',source:'ann-points',type:'circle',paint:{'circle-radius':8,'circle-color':annColorExpr,'circle-stroke-color':'#fff','circle-stroke-width':2}});
-  for(const layer of ['ann-fill','ann-pt'])map.on('click',layer,e=>{const p=e.features[0].properties;new glMod.Popup().setLngLat(e.lngLat).setText(`${p.label}${p.summary?' — '+p.summary:''}`).addTo(map);});
+  map.addLayer({id:'ann-fill',source:'ann-areas',type:'fill',paint:{'fill-color':['get','color'],'fill-opacity':.3}});
+  map.addLayer({id:'ann-line',source:'ann-areas',type:'line',paint:{'line-color':['get','color'],'line-width':weight}});
+  map.addLayer({id:'ann-pt',source:'ann-points',type:'circle',paint:{'circle-radius':['match',['get','severity'],'critical',11,'warning',9,8],'circle-color':['get','color'],'circle-stroke-color':'#ffffff','circle-stroke-width':2}});
+  for(const layer of ['ann-fill','ann-pt'])map.on('click',layer,e=>{const p=e.features[0].properties;new glMod.Popup().setLngLat(e.lngLat).setText(`${p.label} · ${annKindName(p.kind)} · ${p.severity}${p.summary?' — '+p.summary:''}`).addTo(map);});
   return annLayersReady=true;
 }
 function annVisible(){return (annData?.annotations||[]).filter(a=>a.geometry&&!annHidden.has(a.kind));}
 function annDraw(){
+  if(map?.getLayer('people'))map.setLayoutProperty('people','visibility',annHidden.has(BEAGLE_KEY)?'none':'visible');
   if(!annEnsureLayers())return;
   const areas=[],points=[];
   for(const a of annVisible()){
-    const props={id:a.id,label:a.label,summary:a.summary,severity:a.severity,kind:a.kind};
+    const props={id:a.id,label:a.label,summary:a.summary,severity:a.severity,kind:a.kind,color:annKindColor(a.kind)};
     const ring=a.geometry.latlon.map(([lat,lon])=>[lon,lat]);
     if(a.geometry.type==='Polygon')areas.push({type:'Feature',properties:props,geometry:{type:'Polygon',coordinates:[[...ring,ring[0]]]}});
     else points.push({type:'Feature',properties:props,geometry:{type:'Point',coordinates:ring[0]}});
@@ -276,6 +284,25 @@ function annFit(){
   const lons=pts.map(p=>p[0]),lats=pts.map(p=>p[1]);
   map.fitBounds([[Math.min(...lons),Math.min(...lats)],[Math.max(...lons),Math.max(...lats)]],{padding:120,maxZoom:19,duration:600});
 }
+// Legend: one row per kind on the map (colour swatch, name, count, show/hide), plus Beagle Eyes' own people markers.
+function annLegend(list){
+  const counts={};for(const a of list)counts[a.kind]=(counts[a.kind]||0)+1;
+  const beagle=latestTelemetry?.geo?.detections?.length??latestTelemetry?.detections_3d?.length??0;
+  const rows=[...Object.keys(counts).sort().map(k=>({key:k,name:annKindName(k),color:annKindColor(k),count:counts[k]}))];
+  if(beagle||annHidden.has(BEAGLE_KEY))rows.push({key:BEAGLE_KEY,name:'people (Beagle VO)',color:BEAGLE_COLOR,count:beagle});
+  const box=$('annLayers'),sig=rows.map(r=>`${r.key}:${r.count}:${annHidden.has(r.key)}`).join('|');
+  if(box.dataset.sig===sig)return;
+  box.dataset.sig=sig;box.replaceChildren();
+  if(!rows.length)return;
+  for(const r of rows){
+    const label=document.createElement('label'),check=document.createElement('input'),swatch=document.createElement('i'),name=document.createElement('span'),count=document.createElement('b');
+    check.type='checkbox';check.checked=!annHidden.has(r.key);
+    check.onchange=()=>{check.checked?annHidden.delete(r.key):annHidden.add(r.key);annSaveHidden();annDraw();annLegend(annData?.annotations||[]);};
+    swatch.className='swatch';swatch.style.background=r.color;name.textContent=r.name;count.textContent=r.count;
+    label.className=check.checked?'':'off';label.append(check,swatch,name,count);box.append(label);
+  }
+  const note=document.createElement('small');note.textContent='Colour = type · outline/size = severity';box.append(note);
+}
 function annRender(){
   if(!annData)return;
   const d=annData,list=d.annotations||[];
@@ -286,17 +313,12 @@ function annRender(){
   const status=$('annStatus');status.classList.toggle('err',!!d.error);
   const placed=list.filter(a=>a.geometry),edge=placed.filter(a=>a.clamped).length;
   status.textContent=d.error?d.error:d.runs?`${list.length} annotation${list.length===1?'':'s'} (${placed.length} on map${edge?`, ${edge} at edge of view`:''}) · ${d.latency_ms} ms · ${d.model}${list.some(a=>a.approx)?' · approximate (unscaled)':''}`:'Type an instruction, then press Annotate now.';
-  const kinds=[...new Set(list.map(a=>a.kind))];
-  const layers=$('annLayers');
-  if(layers.dataset.kinds!==kinds.join()){
-    layers.dataset.kinds=kinds.join();layers.replaceChildren();
-    for(const k of kinds){const l=document.createElement('label'),c=document.createElement('input');c.type='checkbox';c.checked=!annHidden.has(k);c.onchange=()=>{c.checked?annHidden.delete(k):annHidden.add(k);annDraw();annRender();};l.append(c,k.replace('_',' '));layers.append(l);}
-  }
-  $('annList').replaceChildren(...list.map(a=>{
+  annLegend(list);
+  $('annList').replaceChildren(...list.filter(a=>!annHidden.has(a.kind)).map(a=>{
     const li=document.createElement('li'),dot=document.createElement('span'),text=document.createElement('div');
-    dot.className='dot';dot.style.background=ANN_COLORS[a.severity]||ANN_COLORS.info;
+    dot.className='dot';dot.style.background=annKindColor(a.kind);
     text.textContent=a.label;const sub=document.createElement('small');
-    sub.textContent=a.geometry?`${a.kind.replace('_',' ')}${a.range_m!=null?` · ${a.range_m} m`:''}${a.clamped?' · edge of view':''}${a.summary?' · '+a.summary:''}`:`${a.kind.replace('_',' ')} · not placed (needs --gps-tf)`;
+    sub.textContent=a.geometry?`${annKindName(a.kind)} · ${a.severity}${a.range_m!=null?` · ${a.range_m} m`:''}${a.clamped?' · edge of view':''}${a.summary?' · '+a.summary:''}`:`${annKindName(a.kind)} · not placed (needs --gps-tf)`;
     text.append(sub);li.append(dot,text);
     li.onclick=()=>{if(!a.geometry||!map)return;const [lat,lon]=a.geometry.latlon[0];map.flyTo({center:[lon,lat],zoom:19});};
     return li;}));

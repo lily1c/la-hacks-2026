@@ -1,6 +1,7 @@
 """Ask Gemini what to mark on the map: operator prompt + one drone frame -> located annotations."""
 import json
 import os
+import re
 
 import cv2
 import numpy as np
@@ -11,8 +12,14 @@ from firesight.services.geoproject import enu_to_latlon, pixel_to_ground
 # Flash-Lite with minimal thinking is the low-latency tier; override with GEMINI_ANNOTATE_MODEL.
 DEFAULT_ANNOTATE_MODEL = "gemini-3.5-flash-lite"
 MAX_SIDE_PX = 768
+# Suggested kinds; Gemini may coin others (e.g. "car_crash"), each shown with its own colour and toggle.
 KINDS = ["incident", "hazard_area", "road_blockage", "vehicle", "person", "tree", "structure", "other"]
-AREA_KINDS = {"incident", "hazard_area", "road_blockage"}
+AREA_KINDS = {"incident", "hazard_area", "road_blockage"}  # fallback shape when Gemini omits "shape"
+
+
+def _kind(raw):
+    kind = re.sub(r"[^a-z0-9]+", "_", str(raw).lower()).strip("_")[:24]
+    return kind or "other"
 MAX_ANNOTATIONS = 20
 
 
@@ -30,12 +37,13 @@ def _schema():
                     "type": "object",
                     "properties": {
                         "label": {"type": "string"},
-                        "kind": {"type": "string", "enum": KINDS},
+                        "kind": {"type": "string"},
+                        "shape": {"type": "string", "enum": ["area", "object"]},
                         "severity": {"type": "string", "enum": ["critical", "warning", "info"]},
                         "box_2d": {"type": "array", "items": {"type": "integer"}, "minItems": 4, "maxItems": 4},
                         "summary": {"type": "string"},
                     },
-                    "required": ["label", "kind", "severity", "box_2d"],
+                    "required": ["label", "kind", "shape", "severity", "box_2d"],
                 },
             }
         },
@@ -51,8 +59,10 @@ def _prompt(user_prompt, geo):
     return (
         "You mark things on a map from one drone camera frame. Report only what is clearly visible "
         "and matches the operator instruction below; if nothing matches, return an empty list. "
-        "box_2d is [ymin, xmin, ymax, xmax] normalized to 0-1000. Use area kinds (incident, hazard_area, "
-        "road_blockage) for regions and point kinds (vehicle, person, tree, structure) for single objects. "
+        "box_2d is [ymin, xmin, ymax, xmax] normalized to 0-1000. kind is a short lowercase snake_case category "
+        "(e.g. person, vehicle, tree, incident, hazard_area, road_blockage, or your own such as fire); use the same "
+        "kind for the same type of thing. shape is area for a region (affected zone, blocked road) and object for a "
+        "single thing (one person, one car, one tree). "
         "label under 30 characters, summary under 80. Describe only what is visible; give no distances, "
         "safe routes or evacuation advice." + context + "\n\nOperator instruction: " + user_prompt
     )
@@ -114,7 +124,8 @@ def build_annotations(items, geo, frame_id, now, ttl_s=60):
     for index, item in enumerate(items):
         try:
             ymin, xmin, ymax, xmax = (max(0, min(1000, float(v))) for v in item["box_2d"])
-            kind = item["kind"] if item["kind"] in KINDS else "other"
+            kind = _kind(item["kind"])
+            area = item.get("shape") == "area" if item.get("shape") in ("area", "object") else kind in AREA_KINDS
             record = {
                 "id": f"gem-{frame_id}-{index}",
                 "source": "gemini",
@@ -134,7 +145,7 @@ def build_annotations(items, geo, frame_id, now, ttl_s=60):
         if camera and origin:
             w, h = camera["image_size"]
             to_px = lambda y, x: (x / 1000.0 * w, y / 1000.0 * h)
-            if kind in AREA_KINDS:
+            if area:
                 pixels = [to_px(ymin, xmin), to_px(ymin, xmax), to_px(ymax, xmax), to_px(ymax, xmin)]
             else:
                 pixels = [to_px(ymax, (xmin + xmax) / 2)]  # object sits where its box meets the ground
@@ -142,7 +153,7 @@ def build_annotations(items, geo, frame_id, now, ttl_s=60):
             if all(hits):
                 enu = [hit[0] for hit in hits]
                 latlon = [enu_to_latlon(p, origin) for p in enu]
-                record["geometry"] = {"type": "Polygon" if kind in AREA_KINDS else "Point",
+                record["geometry"] = {"type": "Polygon" if area else "Point",
                                       "enu": [[round(v, 2) for v in p[:2]] for p in enu],
                                       "latlon": [[round(v, 7) for v in p] for p in latlon]}
                 record["clamped"] = any(hit[1] for hit in hits)

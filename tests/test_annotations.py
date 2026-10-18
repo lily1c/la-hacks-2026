@@ -49,16 +49,19 @@ class BuildAnnotationTests(unittest.TestCase):
     def test_area_becomes_polygon_and_vehicle_becomes_point(self):
         items = [{"label": "Crash", "kind": "incident", "severity": "critical", "box_2d": [500, 400, 800, 600]},
                  {"label": "Car", "kind": "vehicle", "severity": "info", "box_2d": [500, 400, 800, 600]},
+                 {"label": "Crowd", "kind": "People Group!", "shape": "area", "severity": "info", "box_2d": [500, 400, 800, 600]},
+                 {"label": "Tree", "kind": "tree", "shape": "object", "severity": "info", "box_2d": [500, 400, 800, 600]},
                  {"label": "bad", "kind": "vehicle"}]
         out = build_annotations(items, self.geo, "f1", 1000.0)
-        self.assertEqual([a["geometry"]["type"] for a in out], ["Polygon", "Point"])
+        self.assertEqual([a["geometry"]["type"] for a in out], ["Polygon", "Point", "Polygon", "Point"])
+        self.assertEqual(out[2]["kind"], "people_group")  # free-form kinds are normalised, shape wins over kind
         self.assertEqual(len(out[0]["geometry"]["latlon"]), 4)
         self.assertFalse(out[0]["approx"])
 
     def test_no_camera_leaves_annotation_unplaced_and_unknown_kind_is_other(self):
         out = build_annotations([{"label": "x", "kind": "weird", "severity": "bad", "box_2d": [0, 0, 10, 10]}], {}, "f", 1.0)
         self.assertIsNone(out[0]["geometry"])
-        self.assertEqual((out[0]["kind"], out[0]["severity"], out[0]["approx"]), ("other", "info", True))
+        self.assertEqual((out[0]["kind"], out[0]["severity"], out[0]["approx"]), ("weird", "info", True))
 
 
 class ServiceTests(unittest.IsolatedAsyncioTestCase):
