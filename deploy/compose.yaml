@@ -1,0 +1,20 @@
+services:
+  dashboard:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8790:8787"
+    environment:
+      FRAME_DIR: /frames
+      G2_REPORT_TOKEN: ${G2_REPORT_TOKEN:-}
+      FIRESIGHT_DETECTOR: ${FIRESIGHT_DETECTOR:-opencv}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.8-flash}
+    volumes:
+      - ${BUNDLE_DIRECTORY:?Set the existing receiver bundle directory}:/frames:ro
+    logging:
+      options:
+        max-size: "5m"
+        max-file: "2"

@@ -108,3 +108,85 @@ firesight-analyze path/to/drone_video.mp4 --sample-seconds 0.5 --out alert.json
 The root-level `wildfire_analyzer.py` remains as a compatibility launcher for existing commands.
 
 JPEG/PNG analysis uses Gemini Vision when configured, or a single-frame OpenCV color/brightness heuristic. Video analysis uses OpenCV. Neither detector is a verified fire assessment; video/container support depends on the codecs available in the local OpenCV build.
+
+## Dashboard
+
+With the API running, open http://localhost:8787/ to upload a JPEG/PNG, analyze it using the configured detector, inspect the latest alert and its JSON, and preview the G2 text. The dashboard polls `/latest` and keeps up to 20 alerts in memory for the current browser session. Alerts older than 15 seconds are labeled stale. The image preview is your uploaded file, not a live drone stream or necessarily the source of an incoming alert. G2 delivery is not confirmed by this preview. No frontend build is required. Use this with the local API; public hosting requires authentication and upload limits.
+
+## Connect Greg’s Beagle Eyes app (later)
+
+The dashboard does not require the old VM. Greg’s computer receives the drone RTMP stream and runs Beagle/DPVO. This backend requests paired camera frames and relative coordinates from that running application. GitHub stores the code; it is not the live data endpoint.
+
+**Leave BEAGLE_URL unset for now.** With neither BEAGLE_URL nor FRAME_DIR configured, the dashboard shows an empty frame area and unavailable coordinates. No drone frames or positions are fabricated.
+
+### 1. Enable export on Greg’s computer
+
+Copy this dashboard project onto Greg’s computer alongside his working beagle_eyes checkout. From this project, run:
+
+```sh
+python3 integrations/beagle/install_adapter.py /absolute/path/to/beagle_eyes
+```
+
+This creates scripts/uav_vo_dashboard.py and scripts/firesight_export.py in his checkout, preserving the original uav_vo.py. It refuses to overwrite an existing adapter and stops if the source insertion points changed. Use Greg’s existing working Python/DPVO environment and configuration.
+
+Set a private token in the terminal (use the same value on both computers; never commit it):
+
+```sh
+export BEAGLE_EXPORT_TOKEN='YOUR_PRIVATE_SHARED_TOKEN'
+# Default bind is localhost. On a trusted shared LAN only:
+export BEAGLE_EXPORT_BIND=0.0.0.0
+cd /absolute/path/to/beagle_eyes
+python scripts/uav_vo_dashboard.py --config config/uav_config.yaml
+```
+
+The adapter exposes GET /snapshot on port 8791. It requires an Authorization: Bearer header and exports at most two snapshots per second. Each response contains matching JPEG bytes, metadata, frame ID, observation timestamp, checksum and, when initialized, latest keyframe translation. It returns 204 after five seconds without a new exported frame. It does not export the point cloud or run hazard analysis.
+
+### 2. Find the address and connect this backend
+
+On Greg’s Linux computer, `hostname -I` lists local IP addresses. Choose the address reachable from the dashboard backend (typically both computers on the same Wi-Fi). Campus Wi-Fi can block peer traffic. Use a private tunnel if needed. Do not expose unencrypted token-bearing HTTP on the public internet; use HTTPS or an SSH tunnel. For an SSH tunnel, keep export bound to localhost and forward local port 8791 to Greg’s localhost:8791.
+
+On the computer running this dashboard:
+
+```sh
+export BEAGLE_URL='http://GREG_REACHABLE_IP:8791/snapshot'
+export BEAGLE_EXPORT_TOKEN='THE_SAME_PRIVATE_SHARED_TOKEN'
+export FIRESIGHT_DETECTOR=opencv
+PYTHONPATH=src uvicorn firesight.api:app --host 127.0.0.1 --port 8790
+```
+
+Open http://127.0.0.1:8790/ and select **Follow drone**. The backend polls Greg, verifies each pair, analyzes the newest frame using the existing detector, and exposes it to the dashboard at /live. /latest keeps the G2 alert format and uses the original frame ID. Slow inference skips intermediate frames; this is a sampled view, not a full-frame-rate video player. Both computers’ clocks should be synchronized; frames older than 30 seconds are rejected.
+
+To use the existing Gemini code, configure GEMINI_API_KEY, FIRESIGHT_DETECTOR=gemini and a provider-supported GEMINI_MODEL in the backend environment. No keys belong in the browser. The screenshot's X/Z/Alt panel is visual odometry, not GPS. This dashboard displays X/Y/Z as arbitrary-scale relative coordinates associated with the latest keyframe; it does not claim meters, exact current-frame pose, safe paths or wearer position. While Beagle initializes, coordinates remain unavailable.
+
+### 3. Verify the live connection
+
+Confirm the receiver status changes to receiving from Beagle, frame IDs change, image and metadata match, and positions appear only after DPVO initialization. Stop Greg’s exporter and confirm the dashboard marks the connection unavailable and clears expired image/position data. G2 delivery and real drone inference must still be tested separately.
+
+The adapter has been source-checked against Greg’s repository, but running his full GPU/DPVO application is still an on-device integration test. There is no configured Greg endpoint in this checkout.
+
+## G2 display monitor and API
+
+The dedicated G2 panel polls the same GET /latest endpoint used by the glasses app, independently of manual/drone preview. The left side shows the outgoing alert formatted approximately like the G2 text layout (9 lines, 44 characters). It is not a hardware screenshot; maps, microphone status, local time zone and transient phone messages may differ.
+
+The right side shows the exact rendered_text supplied by the phone app, with alert ID and server receipt time. Until the phone integrates the report call, it correctly says display unconfirmed. Reports expire as connection evidence after 15 seconds. The SDK accepting an update is not proof the wearer saw it.
+
+Configure G2_REPORT_TOKEN on the backend, then add a report call to the glasses-app branch after checking the actual success result of createStartUpPageContainer, rebuildPageContainer or textContainerUpgrade. Do not mark text as shown before that operation succeeds. Send the rendered container text, not a fresh rendering of an alert that may have changed while awaiting Bluetooth:
+
+```typescript
+await fetch(new URL('/g2/display', SUMMARY_URL), {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${import.meta.env.VITE_G2_REPORT_TOKEN}`,
+  },
+  body: JSON.stringify({
+    alert_id: displayedAlertId,
+    rendered_text: displayedContainerText,
+    status: 'sdk_accepted', // alternatively failed or cleared
+  }),
+})
+```
+
+The variable names in this snippet refer to the captured alert ID and text of the SDK update; they must be wired into the phone's refresh function. Send a heartbeat report every five seconds while the bridge is known to be active; do not report success merely because /latest was fetched. Report failed on an SDK failure, and cleared when clearing expired content. Handle reporting errors without interrupting display updates. The existing glasses-app branch has not yet been patched to send these reports.
+
+GET /g2/status is read by the dashboard and returns reporting_configured, fresh and report. POST /g2/display requires the separate shared token (503 when unset, 401 when incorrect), a nonempty alert_id up to 128 characters, rendered_text up to 2048 characters, and status sdk_accepted/failed/cleared. It retains the last report in memory for this single-device prototype. Restarting clears it. Use HTTPS for remote connections and never use the model API key as the report token. Configure VITE_SUMMARY_URL and the Even Hub network whitelist to the same reachable backend origin. A phone’s localhost does not refer to this computer.

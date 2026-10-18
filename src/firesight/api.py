@@ -1,5 +1,11 @@
 """HTTP API: upload drone videos and expose the latest glasses alert."""
 import asyncio
+from contextlib import asynccontextmanager, suppress
+from firesight.live import BundleWatcher, RemoteBeagleWatcher, timestamp
+import time
+import hmac
+from datetime import datetime, timezone
+from pydantic import BaseModel, Field
 import os
 import tempfile
 from pathlib import Path
@@ -7,14 +13,33 @@ from pathlib import Path
 import cv2
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 
 from firesight.alerts import validate_alert
 from firesight.frame import SUPPORTED_IMAGE_TYPES, analyze_frame
 from firesight.gemini import GeminiConfigurationError, GeminiRequestError
 from firesight.video import analyze_video
 
-app = FastAPI(title="FireSight API", version="1.0.0")
+async def publish_live(alert):
+    global latest_alert
+    async with alert_lock:
+        latest_alert = alert
+
+
+@asynccontextmanager
+async def lifespan(app):
+    app.state.watcher = (RemoteBeagleWatcher(os.environ["BEAGLE_URL"], os.getenv("BEAGLE_EXPORT_TOKEN", ""), analyze_frame, publish_live, frame_lock)
+                         if os.getenv("BEAGLE_URL") else BundleWatcher(os.getenv("FRAME_DIR"), analyze_frame, publish_live, frame_lock))
+    task = asyncio.create_task(app.state.watcher.run())
+    try:
+        yield
+    finally:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+
+
+app = FastAPI(title="FireSight API", version="1.0.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -28,17 +53,60 @@ alert_lock = asyncio.Lock()
 frame_lock = asyncio.Lock()
 
 
+@app.get("/", include_in_schema=False)
+async def dashboard():
+    return FileResponse(Path(__file__).parent / "dashboard" / "index.html")
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}
 
 
+@app.get("/live")
+async def live_status():
+    return JSONResponse(app.state.watcher.status(), headers={"Cache-Control": "no-store"})
+
+
 @app.get("/latest")
 async def get_latest():
     async with alert_lock:
-        if latest_alert is None:
+        try:
+            expired = latest_alert is None or not 0 <= time.time() - timestamp(latest_alert["timestamp"]) <= 30
+        except (ValueError, TypeError, KeyError):
+            expired = True
+        if expired:
             return Response(status_code=204)
         return JSONResponse(content=latest_alert)
+
+
+class G2DisplayReport(BaseModel):
+    alert_id: str = Field(min_length=1, max_length=128)
+    rendered_text: str = Field(max_length=2048)
+    status: str = Field(pattern="^(sdk_accepted|failed|cleared)$")
+
+
+g2_report = None
+
+
+@app.post("/g2/display")
+async def report_g2_display(payload: G2DisplayReport, request: Request):
+    global g2_report
+    token = os.getenv("G2_REPORT_TOKEN", "")
+    if not token:
+        raise HTTPException(503, "G2 display reporting is not configured")
+    if not hmac.compare_digest(request.headers.get("Authorization", ""), "Bearer " + token):
+        raise HTTPException(401, "Invalid display-report token")
+    g2_report = {**payload.model_dump(), "received_at": datetime.now(timezone.utc).isoformat()}
+    return {"ok": True}
+
+
+@app.get("/g2/status")
+async def g2_status():
+    report = g2_report
+    fresh = bool(report and time.time() - timestamp(report["received_at"]) <= 15)
+    return JSONResponse({"reporting_configured": bool(os.getenv("G2_REPORT_TOKEN")),
+                         "fresh": fresh, "report": report}, headers={"Cache-Control": "no-store"})
 
 
 @app.post("/latest")
