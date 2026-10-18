@@ -64,9 +64,58 @@ def nearby_hazards(position, annotations, limit=NEARBY_LIMIT):
     return results[:limit]
 
 
+def _fmt(metres):
+    return f"{round(metres / 10) * 10} m" if metres < 1000 else f"{metres / 1000:.1f} km"
+
+
+def situation(nearby, trend_m=None):
+    """A glasses alert built from the wearer's GPS and the nearest mapped hazard, or None.
+
+    trend_m: how much nearer (positive) or farther (negative) the hazard is than ~10-20 s ago.
+    """
+    if not nearby:
+        return None
+    first = nearby[0]
+    distance = first["distance_m"]
+    approx = "~" if first.get("approx") else ""
+    instructions = []
+    if trend_m is not None:
+        if trend_m >= 5:
+            instructions.append(f"Closing in: {round(trend_m)} m nearer")
+        elif trend_m <= -5:
+            instructions.append(f"Moving away: {round(-trend_m)} m farther")
+        else:
+            instructions.append("Distance holding steady")
+    instructions.append(f"Avoid heading {first['compass']}")
+    for other in nearby[1:3]:
+        instructions.append(f"Also {other['label']} {_fmt(other['distance_m'])} {other['compass']}")
+    return {
+        "priority": "critical" if distance < 100 else "warning" if distance < 300 else "info",
+        "headline": f"{first['label']} {approx}{_fmt(distance)} {first['compass']}"[:40],
+        "instructions": [line[:40] for line in instructions][:5],
+    }
+
+
+def map_key(position, nearby):
+    """Changes when the wearer moves ~4 m or the nearby hazards change, so the glasses refetch the map."""
+    grid = 0.00004
+    cell = f"{round(position['lat'] / grid)}.{round(position['lon'] / grid)}"
+    return cell + "-" + ".".join(f"{n['id']}{n['distance_m'] // 5}" for n in nearby)
+
+
 class WearerStore:
     def __init__(self):
         self.positions = {}
+        self.history = {}  # device_id -> [(ts, nearest distance m)], last ~30 s
+
+    def trend(self, device_id, distance, now=None):
+        """Record the nearest-hazard distance; return how much nearer it is than 10-20 s ago, if known."""
+        now = time.time() if now is None else now
+        samples = [(t, d) for t, d in self.history.get(device_id, []) if now - t <= 30]
+        older = [d for t, d in samples if now - t >= 10]
+        samples.append((now, distance))
+        self.history[device_id] = samples
+        return (older[-1] - distance) if older else None
 
     def update(self, position, now=None):
         now = time.time() if now is None else now

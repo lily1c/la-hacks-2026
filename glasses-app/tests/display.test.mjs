@@ -15,6 +15,7 @@ function harness(ok, expired=false) {
   TextContainerUpgrade:class {constructor(x){Object.assign(this,x)}},RebuildPageContainer:class {},
   bridge:{textContainerUpgrade:async()=>ok,rebuildPageContainer:async()=>ok},
   reportDisplay:async(...args)=>reports.push(args)})
+ vm.runInContext('function activeSummary(){return summary} function activeMapUrl(){return summary?.mapUrl ?? null}',context)
  vm.runInContext(ts.transpileModule(refresh,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText,context)
  return {context,reports}
 }

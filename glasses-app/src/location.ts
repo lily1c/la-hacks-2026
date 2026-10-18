@@ -2,6 +2,13 @@ import { AppLocationAccuracy, type EvenAppBridge, type AppLocation } from '@even
 
 // Phone GPS -> backend POST /wearer every few seconds; the reply lists the nearest mapped hazards.
 
+// What the backend replies to each location report.
+export interface WearerReply {
+  nearby: Nearby[]
+  situation?: unknown  // alert built from GPS when hazards are mapped
+  map_url?: string     // real north-up map around the wearer
+}
+
 export interface Nearby {
   label: string
   severity: string
@@ -18,7 +25,7 @@ export function startLocationReports(
   bridge: EvenAppBridge,
   wearerUrl: string,
   token: string | undefined,
-  onNearby: (nearby: Nearby[]) => void,
+  onReply: (reply: WearerReply) => void,
 ) {
   let fix: AppLocation | null = null
   let sending = false
@@ -60,7 +67,7 @@ export function startLocationReports(
       })
       if (!response.ok) return console.warn('Location report rejected:', response.status)
       const data = await response.json()
-      if (Array.isArray(data.nearby)) onNearby(data.nearby)
+      if (Array.isArray(data.nearby)) onReply(data)
     } catch {
       console.warn('Location report unavailable')
     } finally {

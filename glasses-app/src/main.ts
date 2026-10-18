@@ -59,10 +59,22 @@ async function reportDisplay(alertId: string, text: string, state: 'sdk_accepted
     if (!response.ok) console.warn('Display report rejected:', response.status)
   } catch { console.warn('Display report unavailable') }
 }
-// Nearest mapped hazards from the backend, refreshed with each location report.
+// From each location report: nearest mapped hazards, a GPS-built alert, and a real map around the wearer.
 let nearby: Nearby[] = []
 let nearbyAt = 0
-startLocationReports(bridge, new URL('/wearer', SUMMARY_URL).href, REPORT_TOKEN, (list) => { nearby = list; nearbyAt = Date.now() })
+let gpsSummary: Summary | null = null
+let gpsMapUrl: string | null = null
+startLocationReports(bridge, new URL('/wearer', SUMMARY_URL).href, REPORT_TOKEN, (reply) => {
+  nearby = reply.nearby
+  nearbyAt = Date.now()
+  gpsSummary = reply.situation ? parseSummary(reply.situation) : null
+  gpsMapUrl = reply.map_url ?? null
+})
+const gpsFresh = () => Date.now() - nearbyAt < 20000
+// Drone-frame alerts win; otherwise show the alert built from GPS.
+function activeSummary(): Summary | null { return summary ?? (gpsFresh() ? gpsSummary : null) }
+// The real GPS map wins over the placeholder frame map.
+function activeMapUrl(): string | null { return (gpsFresh() && gpsMapUrl) || activeSummary()?.mapUrl || null }
 let mapShown: string | null = null
 let mapBusy = false
 
@@ -113,7 +125,7 @@ function topLines(): string[] {
   if (age > STALE_MS) {
     // Round to 5s so we don't redraw the glasses every second.
     lines.push(lastOkAt ? `NO SIGNAL - last update ${Math.floor(age / 5000) * 5}s ago` : 'Connecting to command...')
-  } else if (!summary) {
+  } else if (!activeSummary()) {
     lines.push('Waiting for first update...')
   }
   return lines
@@ -128,19 +140,21 @@ function headerLine(s: Summary): string {
 // Text for each container in the current layout.
 function render(): Record<number, string> {
   const top = topLines()
-  const hazard = Date.now() - nearbyAt < 20000 ? hazardLine(nearby) : ''
-  const steps = [...(hazard ? [`>> ${hazard}`] : []), ...(summary ? summary.instructions.map((s) => `- ${s}`) : [])]
+  const current = activeSummary()
+  // The GPS alert already leads with the nearest hazard; add it as a line only above drone alerts.
+  const hazard = summary && gpsFresh() ? hazardLine(nearby) : ''
+  const steps = [...(hazard ? [`>> ${hazard}`] : []), ...(current ? current.instructions.map((s) => `- ${s}`) : [])]
 
   if (layout === 'text') {
     const { mainLines, mainChars } = LIMITS.text
-    const lines = summary ? [...top, headerLine(summary), summary.headline.toUpperCase(), '', ...steps] : [...top, ...steps]
+    const lines = current ? [...top, headerLine(current), current.headline.toUpperCase(), '', ...steps] : [...top, ...steps]
     return { [MAIN_ID]: lines.slice(0, mainLines).map((l) => clip(l, mainChars)).join('\n') }
   }
 
   const { headLines, headChars, mainLines, mainChars } = LIMITS.map
   const head = [
     ...top.flatMap((l) => wrap(l, headChars)),
-    ...(summary ? [headerLine(summary), ...wrap(summary.headline.toUpperCase(), headChars)] : []),
+    ...(current ? [headerLine(current), ...wrap(current.headline.toUpperCase(), headChars)] : []),
   ]
   return {
     [HEAD_ID]: head.slice(0, headLines).map((l) => clip(l, headChars)).join('\n'),
@@ -198,12 +212,12 @@ async function refresh() {
   if (refreshing) return
   refreshing = true
   if (summary && (!Number.isFinite(Date.parse(summary.timestamp)) || Date.now() - Date.parse(summary.timestamp) > STALE_MS)) summary = null
-  const captured = summary
+  const captured = activeSummary()
   const alertId = captured?.id ?? lastDisplayedId
   const previousLayout = layout
   let text = ''
   try {
-    const wanted: Layout = captured?.mapUrl ? 'map' : 'text'
+    const wanted: Layout = activeMapUrl() ? 'map' : 'text'
     layout = wanted
     const next = render()
     text = (wanted === 'map' ? [next[HEAD_ID], next[MAIN_ID]] : [next[MAIN_ID]]).join('\n')
@@ -240,8 +254,9 @@ async function refresh() {
 
 // Send the map image only when its URL changes. Images are slow over Bluetooth, so never overlap sends.
 async function pushMap() {
-  if (layout !== 'map' || !summary?.mapUrl || mapBusy) return
-  const url = new URL(summary.mapUrl, SUMMARY_URL).href
+  const mapUrl = activeMapUrl()
+  if (layout !== 'map' || !mapUrl || mapBusy) return
+  const url = new URL(mapUrl, SUMMARY_URL).href
   if (url === mapShown) return
 
   mapBusy = true

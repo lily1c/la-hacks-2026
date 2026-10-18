@@ -7,7 +7,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from firesight.api import app, wearers
-from firesight.services.wearer import WearerStore, bearing_deg, distance_m, nearby_hazards, validate_position
+from firesight.services.wearer import WearerStore, bearing_deg, distance_m, nearby_hazards, situation, validate_position
 
 HERE = [34.0722, -118.4452]  # UCLA
 
@@ -47,6 +47,22 @@ class GeometryTests(unittest.TestCase):
         self.assertEqual(store.fresh(now=200), [])
 
 
+class SituationTests(unittest.TestCase):
+    def test_alert_from_nearest_hazard(self):
+        near = [{"id": "a", "label": "Fire front", "distance_m": 85, "compass": "NE", "approx": True}]
+        alert = situation(near, trend_m=12)
+        self.assertEqual(alert["priority"], "critical")
+        self.assertEqual(alert["headline"], "Fire front ~80 m NE")
+        self.assertEqual(alert["instructions"][:2], ["Closing in: 12 m nearer", "Avoid heading NE"])
+        self.assertIsNone(situation([]))
+
+    def test_trend_compares_with_10_to_20_seconds_ago(self):
+        store = WearerStore()
+        self.assertIsNone(store.trend("g2", 200, now=100))
+        self.assertIsNone(store.trend("g2", 195, now=105))
+        self.assertEqual(store.trend("g2", 180, now=112), 20)
+
+
 class WearerApiTests(unittest.TestCase):
     def test_report_and_read_position(self):
         wearers.positions.clear()
@@ -62,6 +78,11 @@ class WearerApiTests(unittest.TestCase):
                 nearest = response.json()["nearby"][0]
                 self.assertEqual((nearest["label"], nearest["compass"]), ("Fire front", "N"))
                 self.assertAlmostEqual(nearest["distance_m"], 111, delta=1)
+                reply = response.json()
+                self.assertEqual(reply["situation"]["headline"], "Fire front ~110 m N")
+                image = client.get(reply["map_url"])
+                self.assertEqual(image.headers["content-type"], "image/png")
+                self.assertEqual(client.get("/wearer/map.png?device=nobody").status_code, 404)
                 listed = client.get("/wearer").json()
                 self.assertTrue(listed["configured"])
                 self.assertEqual(listed["wearers"][0]["accuracy_m"], 8.0)

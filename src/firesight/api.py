@@ -21,7 +21,8 @@ from firesight.gemini import GeminiConfigurationError, GeminiRequestError
 from firesight.live import BundleWatcher, RemoteBeagleWatcher, timestamp
 from firesight.push import PushReceiver
 from firesight.services.annotations import AnnotationService
-from firesight.services.wearer import WearerStore, nearby_hazards, validate_position
+from firesight.services.wearer import WearerStore, map_key, nearby_hazards, situation, validate_position
+from firesight.services.wearer_map import render_wearer_map
 from firesight.video import analyze_video
 
 try:
@@ -243,7 +244,28 @@ if _HAS_FASTAPI:
         except ValueError as error:
             raise HTTPException(422, str(error)) from error
         wearers.update(position)
-        return {"ok": True, "nearby": nearby_hazards(position, app.state.annotations.state()["annotations"])}
+        nearby = nearby_hazards(position, app.state.annotations.state()["annotations"])
+        reply = {"ok": True, "nearby": nearby}
+        if nearby:
+            device = position["device_id"]
+            alert = situation(nearby, wearers.trend(device, nearby[0]["distance_m"]))
+            now = datetime.now(timezone.utc)
+            reply["situation"] = {"id": f"gps-{device}-{int(now.timestamp() * 1000)}",
+                                  "timestamp": now.isoformat(timespec="seconds").replace("+00:00", "Z"), **alert}
+            reply["map_url"] = f"/wearer/map.png?device={device}&v={map_key(position, nearby)}"
+        return reply
+
+    @app.get("/wearer/map.png")
+    async def wearer_map(device: str = "g2", v: str = ""):
+        """Real map for the glasses: north-up around the wearer's GPS, with mapped hazards."""
+        position = wearers.positions.get(device)
+        if not position:
+            raise HTTPException(404, "No position for this device")
+        annotations = app.state.annotations.state()["annotations"]
+        nearby = nearby_hazards(position, annotations)
+        others = [p for key, p in wearers.positions.items() if key != device]
+        png = await asyncio.to_thread(render_wearer_map, position, annotations, nearby, others)
+        return Response(content=png, media_type="image/png", headers={"Cache-Control": "no-store"})
 
     @app.get("/wearer")
     async def get_wearers():
