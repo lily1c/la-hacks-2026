@@ -123,5 +123,22 @@ class WearerApiTests(unittest.TestCase):
                 self.assertEqual(client.post("/wearer", json=body).status_code, 503)
 
 
+class DemoHazardTests(unittest.TestCase):
+    def test_demo_fire_placed_near_first_wearer(self):
+        wearers.positions.clear()
+        env = {"G2_REPORT_TOKEN": "phone-test", "FIRESIGHT_DETECTOR": "opencv", "FIRESIGHT_DEMO_HAZARD": "true"}
+        with patch.dict(os.environ, env):
+            with TestClient(app) as client:
+                headers = {"Authorization": "Bearer phone-test"}
+                client.post("/wearer", json={"lat": HERE[0], "lon": HERE[1]}, headers=headers)
+                for _ in range(40):  # the demo task checks every 5 s; wait up to ~8 s
+                    nearby = client.post("/wearer", json={"lat": HERE[0], "lon": HERE[1]}, headers=headers).json()["nearby"]
+                    if nearby:
+                        break
+                    time.sleep(0.2)
+                self.assertEqual(nearby[0]["label"], "Demo fire")
+                self.assertEqual(nearby[0]["compass"], "NE")
+
+
 if __name__ == "__main__":
     unittest.main()

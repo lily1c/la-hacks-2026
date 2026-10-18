@@ -23,6 +23,7 @@ from firesight.push import PushReceiver
 from firesight.services.annotations import AnnotationService
 from firesight.services.wearer import WearerStore, map_key, nearby_hazards, situation, validate_position
 from firesight.services.wearer_map import render_wearer_map
+from firesight.services import demo_hazard
 from firesight.video import analyze_video
 
 try:
@@ -114,6 +115,8 @@ if _HAS_FASTAPI:
         app.state.annotations = AnnotationService(
             lambda: getattr(app.state.watcher, "snapshot", None), fetch_fresh=_fetch_fresh_frame)
         tasks = [asyncio.create_task(app.state.watcher.run()), asyncio.create_task(app.state.annotations.run())]
+        if demo_hazard.enabled():
+            tasks.append(asyncio.create_task(demo_hazard.run_demo_hazard(app.state.annotations, wearers)))
         try:
             yield
         finally:

@@ -1,15 +1,16 @@
 # FireSight
 
-FireSight receives paired drone JPEGs and telemetry from Beagle Eyes, analyzes frames, and serves a map dashboard and alerts to an Even Realities G2 phone app.
+FireSight receives paired drone JPEGs and telemetry from Beagle Eyes, analyzes frames, and serves a map dashboard and alerts to an Even Realities G2 phone app. The glasses report the wearer's GPS and sensor telemetry back, so command sees each firefighter on the map and the glasses show distance and direction to mapped fires.
 
 ```text
 Greg's computer: drone → Beagle Eyes → HTTPS image + telemetry
                                            ↓
-Render: receiver → latest-frame analysis → alert JSON
-           ↓                                  ↓
-       dashboard                 Even Hub phone app → G2
-           ↑                                  ↓
-           └──────── SDK display report ──────┘
+Render: receiver → analysis + Gemini map annotations → alert JSON
+           ↓                                              ↓
+       dashboard                        Even Hub phone app → G2
+           ↑                                              ↓
+           ├──────────── SDK display report ──────────────┤
+           └──── wearer GPS, IMU, buttons, SOS/man-down ──┘
 ```
 
 ## Run locally
@@ -37,7 +38,7 @@ Open http://127.0.0.1:8790. No incoming frames is a normal waiting state. Greg u
 | `src/firesight/ingestion/` | Push receiver and optional legacy bundle readers |
 | `src/firesight/analysis/` | Image/video processing, OpenCV and Gemini |
 | `src/firesight/contracts/` | Shared alert validation |
-| `src/firesight/services/` | Optional demo image rendering |
+| `src/firesight/services/` | Gemini annotations and geo projection, wearer GPS/telemetry (`wearer.py`), glasses maps (`wearer_map.py`, demo `mapview.py`), opt-in demo fire |
 | `src/firesight/dashboard/` | HTML, CSS and JavaScript served by the API |
 | `glasses-app/` | Even Hub TypeScript client |
 | `integrations/beagle_push/` | Sender installed on Greg's computer |
@@ -135,36 +136,35 @@ Without it, Gemini still runs but annotations are listed as "not placed". Result
 API: `GET /annotations`, `POST /annotations/config` (`prompt`, `auto`, `interval_s`), `POST /annotations/run`, `DELETE /annotations`.
 Latency: frames are downscaled to 768 px, thinking is minimal, and calls run off the video path. Annotations expire after 60 s.
 
+## G2 glasses: what works
+
+The glasses app is in [`glasses-app/`](glasses-app/README.md). Tested on real G2 glasses:
+
+- **Alerts:** the latest drone-frame alert (priority, headline, instructions), refreshed every 2 s. Alerts older than 15 s are cleared; `NO SIGNAL` shows when the backend is unreachable.
+- **Wearer GPS:** the phone's GPS goes to `POST /wearer` every 5 s. The reply lists the nearest mapped hazards (Gemini annotations placed by `gps_tf`), and the glasses show e.g. `>> Fire front: ~180 m NE`.
+- **GPS-built alert and map:** with no drone alert active, the glasses show an alert built from GPS (distance, direction, "Closing in" / "Moving away") and a north-up map around the wearer with hazards at their true offset and a zooming scale bar. It updates as the wearer moves.
+- **Telemetry:** IMU (accelerometer, 10 Hz), button presses with their source (right/left temple, R1 ring) and battery/charging. The backend derives a motion state: still, walking or tilted.
+- **Safety:** an impact above 3 g followed by stillness asks "Are you OK?"; no tap within 20 s reports **MAN DOWN**. Holding a temple sends **SOS**. Both turn the wearer red on the dashboard map with a banner.
+- **Controls:** tap = I'm OK / cancel SOS / acknowledge the alert; hold = SOS; scroll = step through nearby hazards; double-tap = exit.
+- **Dashboard:** each wearer is a marker on the map with motion and battery, and the G2 card shows what the glasses reported displaying (or a recorded demo when no phone is reporting).
+
+Limits: directions are compass directions from GPS (about ±3° at 160 m, unreliable under ~25 m). The glasses can't sense which way the head is turned (no magnetometer), and their "worn" flag does not change when the glasses are taken off.
+
+To try the GPS features without a drone, set `FIRESIGHT_DEMO_HAZARD=true` on the backend: a "Demo fire" is placed 180 m north-east of the first wearer (`FIRESIGHT_DEMO_HAZARD_M` to change the distance) and stays put, so walking changes the distance. Real annotations replace it.
+
 ## G2 display monitor and API
 
 The dedicated G2 panel polls the same GET /latest endpoint used by the glasses app, independently of manual/drone preview. The left side shows the outgoing alert formatted approximately like the G2 text layout (9 lines, 44 characters). It is not a hardware screenshot; maps, microphone status, local time zone and transient phone messages may differ.
 
 The right side shows the exact rendered_text supplied by the phone app, with alert ID and server receipt time. Until the phone integrates the report call, it correctly says display unconfirmed. Reports expire as connection evidence after 15 seconds. The SDK accepting an update is not proof the wearer saw it.
 
-Configure G2_REPORT_TOKEN on the backend, then add a report call to the glasses-app branch after checking the actual success result of createStartUpPageContainer, rebuildPageContainer or textContainerUpgrade. Do not mark text as shown before that operation succeeds. Send the rendered container text, not a fresh rendering of an alert that may have changed while awaiting Bluetooth:
-
-```typescript
-await fetch(new URL('/g2/display', SUMMARY_URL), {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-    Authorization: `Bearer ${import.meta.env.VITE_G2_REPORT_TOKEN}`,
-  },
-  body: JSON.stringify({
-    alert_id: displayedAlertId,
-    rendered_text: displayedContainerText,
-    status: 'sdk_accepted', // alternatively failed or cleared
-  }),
-})
-```
-
-The variable names in this snippet refer to the captured alert ID and text of the SDK update; they must be wired into the phone's refresh function. Send a heartbeat report every five seconds while the bridge is known to be active; do not report success merely because /latest was fetched. Report failed on an SDK failure, and cleared when clearing expired content. Handle reporting errors without interrupting display updates. The glasses-app/ copy in this dashboard branch now sends these reports after checking SDK results. The separate upstream glasses-app branch is unchanged.
+The glasses app sends these reports with `VITE_G2_REPORT_TOKEN` (the backend's `G2_REPORT_TOKEN`), only after the SDK accepts an update, plus a heartbeat every five seconds; it reports `failed` on an SDK failure and `cleared` when clearing expired content. The same token authorizes `POST /wearer`.
 
 GET /g2/status is read by the dashboard and returns reporting_configured, fresh and report. POST /g2/display requires the separate shared token (503 when unset, 401 when incorrect), a nonempty alert_id up to 128 characters, rendered_text up to 2048 characters, and status sdk_accepted/failed/cleared. It retains the last report in memory for this single-device prototype. Restarting clears it. Use HTTPS for remote connections and never use the model API key as the report token. Configure VITE_SUMMARY_URL and the Even Hub network whitelist to the same reachable backend origin. A phone’s localhost does not refer to this computer.
 
 ## Render deployment
 
-Use the root render.yaml Blueprint on branch feature/dashboard. It deploys the Docker backend and dashboard together, binds Render's PORT and runs one worker (latest alerts and phone reports are process-local). Free hosting can sleep after inactivity; restarts clear current state. This is a hackathon deployment, not durable incident storage.
+Use the root render.yaml Blueprint on branch main. It deploys the Docker backend and dashboard together, binds Render's PORT and runs one worker (latest alerts and phone reports are process-local). Free hosting can sleep after inactivity; restarts clear current state. This is a hackathon deployment, not durable incident storage.
 
 The Blueprint defaults to OpenCV and generates separate INGEST_TOKEN and G2_REPORT_TOKEN values. Copy G2_REPORT_TOKEN privately from Render into the phone app's VITE_G2_REPORT_TOKEN and rebuild using the actual Render URL. Never commit either token. Enter INGEST_TOKEN in the dashboard upload field to analyze manual frames; POST /frame, /video and /latest require it in hosted mode. The token is kept only in the input, not browser storage. Uploads are limited to 15 MiB in hosted mode.
 
@@ -183,4 +183,4 @@ Leave BEAGLE_URL unset until Greg provides a reachable endpoint. Render cannot c
 
 Render uses `render.yaml`, targeting `main`. An existing manually configured Render service may still require its branch setting to be changed in the dashboard. Keep existing tokens unchanged when deploying.
 
-OpenCV is a color heuristic. Gemini is optional and requires an API key and a model available to your account via `GEMINI_MODEL`. This project does not currently implement Llama or ElevenLabs. Telemetry is relative odometry, not GPS. Generated demo maps are not geographic navigation. Phone GPS and voice-report backend support remain separate work.
+OpenCV is a color heuristic. Gemini is optional and requires an API key and a model available to your account via `GEMINI_MODEL`. This project does not currently implement Llama or ElevenLabs. Drone telemetry is relative odometry unless `gps_tf` geo-referencing is running. The demo `/view.png` map is not geographic navigation; the wearer map (`/wearer/map.png`) is drawn from real GPS and annotation coordinates. A voice-report receiver (`POST /report`) is not implemented.
