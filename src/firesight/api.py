@@ -354,6 +354,16 @@ else:
                 await self._send_response(send, 200, html_bytes, "text/html; charset=utf-8")
                 return
 
+            if method == "GET" and path.startswith("/assets/"):
+                assets_dir = (Path(__file__).parent / "dashboard").resolve()
+                asset = (assets_dir / path[len("/assets/"):]).resolve()
+                if asset.parent != assets_dir or not asset.is_file():
+                    await self._send_json(send, {"detail": "Not found"}, 404)
+                    return
+                kind = {".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8"}.get(asset.suffix, "application/octet-stream")
+                await self._send_response(send, 200, asset.read_bytes(), kind)
+                return
+
             if method == "GET" and path == "/health":
                 await self._send_json(send, {"status": "ok"})
                 return
