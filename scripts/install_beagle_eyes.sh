@@ -52,6 +52,7 @@ git -C "${TARGET_DIR}" submodule update --init vendor/Deep-Visual-Odometry-SLAM
 if [[ "${2:-}" != "--skip-build" ]] && [[ -x "${TARGET_DIR}/scripts/setup_dpvo.sh" ]]; then
     if command -v nvcc >/dev/null 2>&1 || [[ -d "/usr/local/cuda" ]] || [[ -d "/usr/local/cuda-13.0" ]]; then
         echo "[4/4] Running DPVO CUDA extension setup..."
+        sed -i 's/import cuda_corr/import torch, cuda_corr/' "${TARGET_DIR}/scripts/setup_dpvo.sh"
         bash "${TARGET_DIR}/scripts/setup_dpvo.sh"
     else
         echo "[4/4] No CUDA toolkit detected on this machine — skipping DPVO CUDA build."

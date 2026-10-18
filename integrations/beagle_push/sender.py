@@ -13,9 +13,9 @@ from urllib.request import Request, urlopen
 class FireSightSender:
     def __init__(self):
         self.url = os.environ['FIRESIGHT_URL'].rstrip('/') + '/ingest/beagle'
-        if not self.url.startswith('https://'):
-            raise ValueError('FIRESIGHT_URL must use HTTPS')
-        self.token = os.environ['INGEST_TOKEN']
+        if not self.url.startswith(('https://', 'http://127.0.0.1', 'http://localhost')):
+            raise ValueError('FIRESIGHT_URL must use HTTPS (or localhost HTTP)')
+        self.token = os.getenv('INGEST_TOKEN', '')
         self.session = str(uuid.uuid4())
         self.queue = queue.Queue(maxsize=1)
         threading.Thread(target=self._run, daemon=True).start()
