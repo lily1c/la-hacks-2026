@@ -2,84 +2,219 @@ import {
   waitForEvenAppBridge,
   TextContainerProperty,
   TextContainerUpgrade,
+  ImageContainerProperty,
+  ImageRawDataUpdate,
+  ImageRawDataUpdateResult,
   CreateStartUpPageContainer,
   RebuildPageContainer,
   OsEventTypeList,
+  AudioInputSource,
 } from '@evenrealities/even_hub_sdk'
 import { parseSummary, type Summary } from './summary'
+import { pcmToWav, pcmSeconds } from './voice'
 
 // Where the backend serves the latest summary. Override with VITE_SUMMARY_URL in .env.local.
 const SUMMARY_URL = import.meta.env.VITE_SUMMARY_URL ?? 'http://localhost:8787/latest'
+// Voice reports are POSTed to the same backend.
+const REPORT_URL = new URL('/report', SUMMARY_URL).href
 const POLL_MS = 2000
 // After this long without a successful fetch, warn the wearer that the info may be out of date.
 const STALE_MS = 15000
-// Rough fit for the 576×288 canvas.
-const MAX_LINES = 9
-const MAX_LINE_CHARS = 44
+const MAX_RECORD_SECONDS = 30
+
+// Container IDs. MAIN is the only one that captures input.
+const MAIN_ID = 1
+const HEAD_ID = 2
+const MAP_ID = 3
+
+// Two layouts on the 576×288 canvas:
+//   text: one full-screen text container.
+//   map:  headline top-left, 288×144 map top-right (the max image size), instructions along the bottom.
+type Layout = 'text' | 'map'
+const LIMITS = {
+  text: { mainLines: 9, mainChars: 44 },
+  map: { headLines: 5, headChars: 24, mainLines: 4, mainChars: 44 },
+}
 
 const bridge = await waitForEvenAppBridge()
 
 let summary: Summary | null = null
 let lastOkAt = 0
-let shown = ''
+let layout: Layout = 'text'
+let shown: Record<number, string> = {}
+let mapShown: string | null = null
+let mapBusy = false
 
-function clip(line: string): string {
-  return line.length > MAX_LINE_CHARS ? line.slice(0, MAX_LINE_CHARS - 1) + '…' : line
+// Voice report state.
+let recording = false
+let recordStartedAt = 0
+let chunks: Uint8Array[] = []
+let status = '' // transient line like "Report sent", shown at the top
+let statusTimer: ReturnType<typeof setTimeout> | undefined
+
+function setStatus(text: string, clearAfterMs?: number) {
+  status = text
+  clearTimeout(statusTimer)
+  if (clearAfterMs) statusTimer = setTimeout(() => setStatus(''), clearAfterMs)
+  refresh()
 }
 
-function render(): string {
-  const lines: string[] = []
-  const age = lastOkAt ? Date.now() - lastOkAt : Infinity
+function clip(line: string, max: number): string {
+  return line.length > max ? line.slice(0, max - 1) + '…' : line
+}
 
+// Greedy word wrap for the narrow headline column.
+function wrap(text: string, max: number): string[] {
+  const lines: string[] = []
+  let line = ''
+  for (const word of text.split(/\s+/)) {
+    if (line && (line + ' ' + word).length > max) {
+      lines.push(line)
+      line = word
+    } else {
+      line = line ? line + ' ' + word : word
+    }
+  }
+  if (line) lines.push(line)
+  return lines
+}
+
+function topLines(): string[] {
+  const lines: string[] = []
+  if (recording) {
+    const secs = Math.floor((Date.now() - recordStartedAt) / 1000)
+    lines.push(`● REC 0:${String(secs).padStart(2, '0')}`)
+  } else if (status) {
+    lines.push(status)
+  }
+
+  const age = lastOkAt ? Date.now() - lastOkAt : Infinity
   if (age > STALE_MS) {
     // Round to 5s so we don't redraw the glasses every second.
     lines.push(lastOkAt ? `NO SIGNAL - last update ${Math.floor(age / 5000) * 5}s ago` : 'Connecting to command...')
-  }
-
-  if (summary) {
-    const time = new Date(summary.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    const tag = summary.priority === 'critical' ? '!! CRITICAL' : summary.priority === 'warning' ? '! WARNING' : 'INFO'
-    lines.push(`${tag}   ${time}`, summary.headline.toUpperCase(), '')
-    for (const step of summary.instructions) lines.push(`- ${step}`)
-  } else if (lastOkAt) {
+  } else if (!summary) {
     lines.push('Waiting for first update...')
   }
-
-  return lines.slice(0, MAX_LINES).map(clip).join('\n')
+  return lines
 }
 
-const mainText = new TextContainerProperty({
-  xPosition: 0,
-  yPosition: 0,
-  width: 576,
-  height: 288,
-  borderWidth: 0,
-  borderColor: 5,
-  paddingLength: 4,
-  containerID: 1,
-  containerName: 'main',
-  content: (shown = render()),
-  isEventCapture: 1,
-})
+function headerLine(s: Summary): string {
+  const time = new Date(s.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  const tag = s.priority === 'critical' ? '!! CRITICAL' : s.priority === 'warning' ? '! WARNING' : 'INFO'
+  return `${tag}   ${time}`
+}
 
-const result = await bridge.createStartUpPageContainer(
-  new CreateStartUpPageContainer({ containerTotalNum: 1, textObject: [mainText] }),
-)
+// Text for each container in the current layout.
+function render(): Record<number, string> {
+  const top = topLines()
+  const steps = summary ? summary.instructions.map((s) => `- ${s}`) : []
+
+  if (layout === 'text') {
+    const { mainLines, mainChars } = LIMITS.text
+    const lines = summary ? [...top, headerLine(summary), summary.headline.toUpperCase(), '', ...steps] : top
+    return { [MAIN_ID]: lines.slice(0, mainLines).map((l) => clip(l, mainChars)).join('\n') }
+  }
+
+  const { headLines, headChars, mainLines, mainChars } = LIMITS.map
+  const head = [
+    ...top.flatMap((l) => wrap(l, headChars)),
+    ...(summary ? [headerLine(summary), ...wrap(summary.headline.toUpperCase(), headChars)] : []),
+  ]
+  return {
+    [HEAD_ID]: head.slice(0, headLines).map((l) => clip(l, headChars)).join('\n'),
+    [MAIN_ID]: steps.slice(0, mainLines).map((l) => clip(l, mainChars)).join('\n') || ' ',
+  }
+}
+
+function textContainer(id: number, name: string, x: number, y: number, w: number, h: number, content: string) {
+  return new TextContainerProperty({
+    xPosition: x,
+    yPosition: y,
+    width: w,
+    height: h,
+    borderWidth: 0,
+    borderColor: 5,
+    paddingLength: 4,
+    containerID: id,
+    containerName: name,
+    content,
+    isEventCapture: id === MAIN_ID ? 1 : 0,
+  })
+}
+
+function page(content: Record<number, string>) {
+  if (layout === 'text') {
+    return { containerTotalNum: 1, textObject: [textContainer(MAIN_ID, 'main', 0, 0, 576, 288, content[MAIN_ID])] }
+  }
+  return {
+    containerTotalNum: 3,
+    textObject: [
+      textContainer(HEAD_ID, 'head', 0, 0, 288, 144, content[HEAD_ID]),
+      textContainer(MAIN_ID, 'main', 0, 144, 576, 144, content[MAIN_ID]),
+    ],
+    imageObject: [
+      new ImageContainerProperty({ xPosition: 288, yPosition: 0, width: 288, height: 144, containerID: MAP_ID, containerName: 'map' }),
+    ],
+  }
+}
+
+const NAMES: Record<number, string> = { [MAIN_ID]: 'main', [HEAD_ID]: 'head' }
+
+shown = render()
+const result = await bridge.createStartUpPageContainer(new CreateStartUpPageContainer(page(shown)))
 if (result !== 0) {
   // The startup page can only be created once per session. After a Vite
   // reload it already exists, so rebuild it instead.
-  const rebuilt = await bridge.rebuildPageContainer(
-    new RebuildPageContainer({ containerTotalNum: 1, textObject: [mainText] }),
-  )
+  const rebuilt = await bridge.rebuildPageContainer(new RebuildPageContainer(page(shown)))
   if (!rebuilt) console.error('createStartUpPageContainer failed:', result)
 }
 
-// Only send to the glasses when the text actually changed.
-function refresh() {
-  const next = render()
-  if (next === shown) return
-  shown = next
-  bridge.textContainerUpgrade(new TextContainerUpgrade({ containerID: 1, containerName: 'main', content: next }))
+let refreshing = false
+
+// Push changes to the glasses: rebuild if the layout changed, otherwise only update text that changed.
+async function refresh() {
+  if (refreshing) return // the 1s interval will catch up
+  refreshing = true
+  try {
+    const wanted: Layout = summary?.mapUrl ? 'map' : 'text'
+    if (wanted !== layout) {
+      layout = wanted
+      shown = render()
+      mapShown = null // a fresh image container needs its data again
+      await bridge.rebuildPageContainer(new RebuildPageContainer(page(shown)))
+    } else {
+      const next = render()
+      for (const [id, content] of Object.entries(next)) {
+        if (shown[+id] === content) continue
+        shown[+id] = content
+        await bridge.textContainerUpgrade(new TextContainerUpgrade({ containerID: +id, containerName: NAMES[+id], content }))
+      }
+    }
+  } finally {
+    refreshing = false
+  }
+  pushMap()
+}
+
+// Send the map image only when its URL changes. Images are slow over Bluetooth, so never overlap sends.
+async function pushMap() {
+  if (layout !== 'map' || !summary?.mapUrl || mapBusy) return
+  const url = new URL(summary.mapUrl, SUMMARY_URL).href
+  if (url === mapShown) return
+
+  mapBusy = true
+  try {
+    const res = await fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(5000) })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const bytes = new Uint8Array(await res.arrayBuffer())
+    const r = await bridge.updateImageRawData(new ImageRawDataUpdate({ containerID: MAP_ID, containerName: 'map', imageData: bytes }))
+    if (r === ImageRawDataUpdateResult.success) mapShown = url
+    else console.warn('Map update failed:', r)
+  } catch (err) {
+    console.warn('Map fetch error:', err)
+  } finally {
+    mapBusy = false
+  }
 }
 
 async function fetchLatest() {
@@ -107,10 +242,58 @@ async function pollLoop() {
 }
 
 pollLoop()
-// Keeps the "NO SIGNAL" age current even while fetches hang.
-setInterval(refresh, 1000)
+// Keeps the "NO SIGNAL" age and recording timer current.
+setInterval(() => {
+  if (recording && Date.now() - recordStartedAt > MAX_RECORD_SECONDS * 1000) stopRecording()
+  refresh()
+}, 1000)
+
+async function startRecording() {
+  if (recording) return
+  chunks = []
+  recording = true
+  recordStartedAt = Date.now()
+  refresh()
+  const ok = await bridge.audioControl(true, AudioInputSource.Glasses)
+  if (!ok) {
+    recording = false
+    setStatus('Mic unavailable', 4000)
+  }
+}
+
+async function stopRecording() {
+  if (!recording) return
+  recording = false
+  await bridge.audioControl(false)
+
+  if (pcmSeconds(chunks) < 0.5) {
+    setStatus('Too short - hold to record', 3000)
+    return
+  }
+
+  setStatus('Sending report...')
+  try {
+    const res = await fetch(REPORT_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'audio/wav' },
+      body: pcmToWav(chunks),
+      signal: AbortSignal.timeout(15000),
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    setStatus('Report sent', 4000)
+  } catch (err) {
+    console.warn('Report upload failed:', err)
+    setStatus('Report FAILED - hold to retry', 6000)
+  }
+  chunks = []
+}
 
 bridge.onEvenHubEvent((event) => {
+  if (event.audioEvent) {
+    if (recording) chunks.push(event.audioEvent.audioPcm)
+    return
+  }
+
   // Taps arrive as sysEvent (source-aware) or textEvent depending on host version.
   const input = event.textEvent ?? event.sysEvent
   if (!input) return
@@ -119,11 +302,21 @@ bridge.onEvenHubEvent((event) => {
     case OsEventTypeList.CLICK_EVENT:
     case undefined: // SDK normalizes 0 to undefined in some cases
       // Tap to fetch immediately instead of waiting for the next poll.
-      fetchLatest()
+      if (!recording) fetchLatest()
+      break
+
+    case OsEventTypeList.LONG_PRESS_EVENT:
+      // Hold to record a voice report, like a walkie-talkie.
+      startRecording()
+      break
+
+    case OsEventTypeList.LONG_PRESS_RELEASE_EVENT:
+      stopRecording()
       break
 
     case OsEventTypeList.DOUBLE_CLICK_EVENT:
       // Mode 1 shows the system exit-confirmation dialog (required on the root page).
+      if (recording) stopRecording()
       bridge.shutDownPageContainer(1)
       break
   }

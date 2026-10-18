@@ -12,6 +12,10 @@
       "whitelist": [
         "http://localhost:8787"
       ]
+    },
+    {
+      "name": "g2-microphone",
+      "desc": "Records voice reports from the field while the wearer holds the temple."
     }
   ],
   "supported_languages": [

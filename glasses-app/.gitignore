@@ -25,3 +25,6 @@ dist-ssr
 
 # Even Hub packages
 *.ehpk
+
+# Voice reports saved by the mock server
+reports/

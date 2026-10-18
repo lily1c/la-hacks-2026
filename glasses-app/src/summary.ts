@@ -7,6 +7,7 @@ export interface Summary {
   priority: Priority
   headline: string      // one short line, shown first
   instructions: string[] // a few short lines, most important first
+  mapUrl?: string       // optional 288×144 image; change the URL to push a new map
 }
 
 const PRIORITIES: Priority[] = ['critical', 'warning', 'info']
@@ -26,5 +27,6 @@ export function parseSummary(raw: unknown): Summary | null {
     instructions: Array.isArray(r.instructions)
       ? r.instructions.filter((s): s is string => typeof s === 'string' && s.trim() !== '').map((s) => s.trim())
       : [],
+    mapUrl: typeof r.map_url === 'string' && r.map_url !== '' ? r.map_url : undefined,
   }
 }

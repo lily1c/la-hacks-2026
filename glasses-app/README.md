@@ -19,17 +19,20 @@ Built by [@Dakshaarvind](https://github.com/Dakshaarvind).
 flowchart LR
     A[Drone camera] -->|live video stream| B[Frame extraction]
     B -->|frames| C[LLM summarization]
-    C -->|summary JSON| D[Backend<br/>GET /latest]
+    C -->|summary JSON + map| D[Backend<br/>GET /latest, POST /report]
     D -->|polled every 2s<br/>over the phone's connection| E[Glasses app<br/>runs in Even phone app]
-    E -->|Bluetooth| F[G2 glasses display]
+    E <-->|Bluetooth| F[G2 glasses<br/>display + mic]
+    E -->|voice report WAV| D
+    D -.->|transcript as field report| C
 ```
 
 1. A drone streams live video of the fire.
 2. The pipeline pulls frames from the stream and sends them to LLMs, which write a short situation summary with directions.
 3. The backend keeps the latest summary and serves it as JSON at one URL.
-4. **This app** runs inside the Even app on the firefighter's phone. Every 2 seconds it fetches that URL, and when the summary changes it redraws the glasses display.
+4. **This app** runs inside the Even app on the firefighter's phone. Every 2 seconds it fetches that URL, and when the summary changes it redraws the glasses display, including a live fire map.
+5. The firefighter can hold a temple to send a voice report back. The backend transcribes it and feeds it into the next summary, so people on the ground add to what the drone sees.
 
-The only link between the pipeline and the glasses is the JSON format in [SUMMARY_FORMAT.md](SUMMARY_FORMAT.md). Either side can change internally without breaking the other.
+The only link between the pipeline and the glasses is the API in [SUMMARY_FORMAT.md](SUMMARY_FORMAT.md). Either side can change internally without breaking the other.
 
 ## What this app does
 
@@ -38,7 +41,9 @@ The only link between the pipeline and the glasses is the JSON format in [SUMMAR
 - **Handles bad data safely.** A malformed summary is ignored and the last good one stays up. Missing optional fields get defaults.
 - **Fits the display.** The G2 canvas is 576×288 px, about 9 lines of 44 characters. Longer lines are cut off with `…` rather than wrapping off-screen.
 - **Avoids unnecessary redraws.** The app only sends text to the glasses when the content actually changes, which saves Bluetooth bandwidth and battery.
-- **Glasses controls:** tap a temple to fetch immediately. Double-tap to exit; the system confirmation dialog appears, as Even requires.
+- **Live fire map.** When the backend sends a map image, the display splits: headline top-left, a 288×144 map top-right (fire, wearer, escape route, safe zone), instructions below. The image is only re-sent when it changes, since images are slow over Bluetooth.
+- **Voice reports.** Hold a temple to record from the glasses microphone, like a walkie-talkie, and release to send. The app shows `● REC 0:03` while recording and `Report sent` or `Report FAILED` afterwards. The audio goes to the backend as a WAV file for transcription, so firefighters can report what they see back to command.
+- **Glasses controls:** tap to fetch immediately, hold to record a voice report, double-tap to exit (the system confirmation dialog appears, as Even requires).
 
 ## Code
 
@@ -46,8 +51,9 @@ The only link between the pipeline and the glasses is the JSON format in [SUMMAR
 |---|---|
 | [src/main.ts](src/main.ts) | Connects to the glasses, polls the backend, renders the display, handles taps |
 | [src/summary.ts](src/summary.ts) | The summary type and validation of incoming JSON |
-| [SUMMARY_FORMAT.md](SUMMARY_FORMAT.md) | The JSON contract for the backend team |
-| [mock-server.mjs](mock-server.mjs) | Fake backend for testing without the drone pipeline |
+| [src/voice.ts](src/voice.ts) | Packages microphone audio as WAV for upload |
+| [SUMMARY_FORMAT.md](SUMMARY_FORMAT.md) | The backend API: summary JSON, map image, voice reports |
+| [mock-server.mjs](mock-server.mjs) | Fake backend for testing: summaries, generated fire maps, saves voice reports |
 | [app.json](app.json) | Even Hub manifest, including the network permission whitelist |
 | [scripts/use-backend.mjs](scripts/use-backend.mjs) | Points the app at a backend URL (env + whitelist) |
 
