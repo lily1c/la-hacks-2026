@@ -101,9 +101,13 @@ async def get_latest():
     if os.getenv("FIRESIGHT_DEMO_MAP") == "true":
         # Placeholder map for demos; the glasses re-download it only when map_url changes.
         # Place the map's fire in the sector the detector reported, e.g. "Check upper-left frame sector".
-        matches = (re.match(r"Check (.+) frame sector", line) for line in alert["instructions"])
-        match = next((m for m in matches if m), None)
-        direction = f"&dir={match.group(1)}" if match else "&dir=none"
+        # Gemini reports fire_sector; the OpenCV detector names it in "Check <sector> frame sector".
+        sector = alert.get("fire_sector")
+        if not sector:
+            matches = (re.match(r"Check (.+) frame sector", line) for line in alert["instructions"])
+            match = next((m for m in matches if m), None)
+            sector = match.group(1) if match else "none"
+        direction = f"&dir={sector}"
         alert = {**alert, "map_url": f"/view.png?v={alert['id']}{direction}"}
     return JSONResponse(content=alert)
 
