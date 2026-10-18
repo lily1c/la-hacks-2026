@@ -48,6 +48,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.middleware("http")
+async def protect_public_writes(request: Request, call_next):
+    if os.getenv("PUBLIC_DEPLOYMENT") == "true" and request.method == "POST" and request.url.path in ("/frame", "/video", "/latest"):
+        token = os.getenv("INGEST_TOKEN", "")
+        if not token or not hmac.compare_digest(request.headers.get("Authorization", ""), "Bearer " + token):
+            return JSONResponse({"detail": "A valid ingest token is required"}, status_code=401)
+        # Enforce a bounded request body, including chunked requests.
+        body = bytearray()
+        async for chunk in request.stream():
+            body.extend(chunk)
+            if len(body) > 15 * 1024 * 1024:
+                return JSONResponse({"detail": "Upload exceeds 15 MiB"}, status_code=413)
+        request._body = bytes(body)
+    response = await call_next(request)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 latest_alert = None
 alert_lock = asyncio.Lock()
 frame_lock = asyncio.Lock()

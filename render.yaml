@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: firesight-dashboard
+    runtime: docker
+    plan: free
+    branch: feature/dashboard
+    dockerfilePath: ./deploy/Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: FIRESIGHT_DETECTOR
+        value: opencv
+      - key: G2_REPORT_TOKEN
+        generateValue: true
+      - key: INGEST_TOKEN
+        generateValue: true
+      - key: PUBLIC_DEPLOYMENT
+        value: 'true'

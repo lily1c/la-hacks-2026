@@ -5,4 +5,4 @@ COPY pyproject.toml README.md ./
 COPY src ./src
 RUN pip install --no-cache-dir . && useradd --uid 10001 --create-home firesight
 USER firesight
-CMD ["uvicorn", "firesight.api:app", "--host", "0.0.0.0", "--port", "8787"]
+CMD ["sh", "-c", "exec uvicorn firesight.api:app --host 0.0.0.0 --port ${PORT:-8787} --workers 1"]
