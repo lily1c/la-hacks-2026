@@ -1,4 +1,6 @@
 """Gemini vision-language inference for individual JPEG and PNG frames."""
+import copy
+import hashlib
 import json
 import os
 from datetime import datetime, timezone
@@ -7,6 +9,11 @@ from firesight.alerts import validate_alert
 
 DEFAULT_MODEL = "gemini-3.8-flash"
 MAX_IMAGE_BYTES = 14 * 1024 * 1024
+
+
+# Results by image + prompt + model, so a repeated frame doesn't spend API quota again.
+_cache = {}
+CACHE_LIMIT = 256
 
 
 class GeminiConfigurationError(ValueError):
@@ -96,6 +103,9 @@ def analyze_image_with_gemini(image_bytes, media_type):
         "headline='No fire detected in frame', no instructions and fire_sector=none."
     )
     model = os.getenv("GEMINI_MODEL", DEFAULT_MODEL).strip() or DEFAULT_MODEL
+    cache_key = hashlib.sha256(image_bytes + prompt.encode() + model.encode()).hexdigest()
+    if cache_key in _cache:
+        return _finish(copy.deepcopy(_cache[cache_key]))
 
     try:
         from google import genai
@@ -128,6 +138,14 @@ def analyze_image_with_gemini(image_bytes, media_type):
 
     if not isinstance(result, dict) or not isinstance(result.get("detected"), bool):
         raise GeminiRequestError("Gemini returned an invalid detection result")
+    if len(_cache) >= CACHE_LIMIT:
+        _cache.pop(next(iter(_cache)))
+    _cache[cache_key] = copy.deepcopy(result)
+    return _finish(result)
+
+
+def _finish(result):
+    """Normalize a parsed Gemini result into a glasses alert with a fresh id and timestamp."""
     if not result["detected"]:
         result = {
             "priority": "info",
