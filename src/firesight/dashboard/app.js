@@ -21,14 +21,19 @@ function voToLngLat(x,z){
   return [center[0]+dLng,center[1]+dLat];
 }
 
-let geoTrail=[],geoOriginKey='';
+let geoTrail=[],geoOriginKey='',geoOrigin=null,originMarker=null;
 const geoNote=g=>{const tf=g.transform_v_to_e||{};return `${g.origin?.source||'?'} origin · scale ${tf.scale_status||'?'}${tf.calibrated?'':' (unscaled)'}`;};
 
 // Geo-referenced path: the Beagle Eyes gps_tf transform supplies lat/lon, so no local guessing is needed.
 function updateLiveMapFromGeo(t,g){
   const lla=g.drone.lla,lngLat=[lla[1],lla[0]];
   const key=`${g.origin.lat},${g.origin.lon}`;
-  if(key!==geoOriginKey){geoOriginKey=key;geoTrail=[];map.jumpTo({center:[g.origin.lon,g.origin.lat],zoom:18});}
+  if(key!==geoOriginKey){
+    geoOriginKey=key;geoTrail=[];geoOrigin=[g.origin.lon,g.origin.lat];
+    map.jumpTo({center:geoOrigin,zoom:18});
+    originMarker?.remove();
+    originMarker=new glMod.Marker({color:'#f0804b'}).setLngLat(geoOrigin).setPopup(new glMod.Popup({offset:24}).setText(`Start / origin (${g.origin.source})`)).addTo(map);
+  }
   if(!marker){
     marker=new glMod.Marker({element:createDroneMarkerElement('Beagle Eyes drone')}).setLngLat(lngLat).addTo(map);
   }else{
@@ -52,7 +57,7 @@ function updateLiveMapFromGeo(t,g){
 
 function updateLiveMapFromTelemetry(t){
   if(sim||!map||!map.isStyleLoaded()||!glMod)return;
-  if(t?.geo?.drone?.lla&&t.geo.origin&&t.initialized){updateLiveMapFromGeo(t,t.geo);return;}
+  if(t?.geo?.drone?.lla&&t.geo.origin){updateLiveMapFromGeo(t,t.geo);return;}
   const pos=t?.pose?.position;
   if(!Array.isArray(pos)||pos.length<3)return;
   const lngLat=voToLngLat(pos[0],pos[2]);
@@ -178,7 +183,7 @@ map.addSource('people',{type:'geojson',data:empty});map.addLayer({id:'people',so
 if(latestTelemetry)updateLiveMapFromTelemetry(latestTelemetry);
 });
 function scenario(){if(!map.isStyleLoaded()){$('mapInfo').textContent='Map still loading; try again shortly.';return;}sim=!sim;trail=[];tick=0;marker?.remove();marker=null;map.getSource('path').setData(empty);$('demo').textContent=sim?'Stop scenario':'Start scenario';$('demo').classList.toggle('active',sim);$('mapTitle').textContent=sim?'Wildfire / Simulation':'UCLA / Field map';$('mapMode').textContent=sim?'Synthetic fire & flight':'Basemap · No GPS connected';$('mapInfo').textContent=sim?'Orange: invented fire zone · moving icon: simulated drone':'Real map. Awaiting geographic telemetry.';const pts=[[-.0007,-.0003],[-.0005,.0004],[.0001,.0006],[.0006,.0002],[.0004,-.0004],[-.0007,-.0003]].map(p=>[center[0]+p[0],center[1]+p[1]]);map.getSource('scenario').setData(sim?{type:'Feature',properties:{},geometry:{type:'Polygon',coordinates:[pts]}}:empty);if(sim){marker=new gl.Marker({element:createDroneMarkerElement('Simulated drone')}).setLngLat(center).addTo(map);}else if(latestTelemetry){updateLiveMapFromTelemetry(latestTelemetry);}}
-$('demo').onclick=scenario;$('tilt').onclick=()=>map.easeTo({pitch:map.getPitch()>20?0:58});$('mapView').onclick=()=>map.flyTo({center,zoom:16,pitch:58,bearing:-28});
+$('demo').onclick=scenario;$('tilt').onclick=()=>map.easeTo({pitch:map.getPitch()>20?0:58});$('mapView').onclick=()=>map.flyTo({center:geoOrigin||center,zoom:geoOrigin?18:16,pitch:58,bearing:-28});
 function route(t){return [center[0]+.0013*Math.cos(t)+.00012*Math.sin(3*t),center[1]+.0008*Math.sin(t)+.00008*Math.sin(2*t)];}
 function animate(t){const dt=Math.min(Math.max(t-previous,0),50)/1000;previous=t;if(sim&&!document.hidden){tick+=dt;const phase=tick*.12,p=route(phase),ahead=route(phase+.005);marker.setLngLat(p);
 // Orient the sketch using projected screen travel, including map bearing/pitch.
