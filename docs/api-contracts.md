@@ -10,4 +10,6 @@
 
 Legacy POST /frame, /video and /latest remain supported. With PUBLIC_DEPLOYMENT=true they require INGEST_TOKEN. Legacy /frame is image-only and does not establish telemetry pairing. /video produces an aggregate OpenCV alert.
 
-No /report voice endpoint or wearer-location endpoint is implemented.
+`POST /wearer`: bearer G2_REPORT_TOKEN (the same token as display reports), JSON lat, lon, optional device_id (default `g2`), accuracy_m, heading_deg, speed_mps. Returns `nearby`: up to 3 mapped annotations sorted by distance, each with label, kind, severity, distance_m, bearing_deg, compass and approx. `GET /wearer` returns positions reported in the last 30 seconds. Positions are kept in memory only; like the other read endpoints, GET /wearer is public.
+
+No /report voice endpoint is implemented.

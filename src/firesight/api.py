@@ -21,6 +21,7 @@ from firesight.gemini import GeminiConfigurationError, GeminiRequestError
 from firesight.live import BundleWatcher, RemoteBeagleWatcher, timestamp
 from firesight.push import PushReceiver
 from firesight.services.annotations import AnnotationService
+from firesight.services.wearer import WearerStore, nearby_hazards, validate_position
 from firesight.video import analyze_video
 
 try:
@@ -37,10 +38,21 @@ if not {"unittest", "pytest"} & set(sys.modules):  # tests must not pick up a re
     load_dotenv()
 latest_alert = None
 g2_report = None
+wearers = WearerStore()
 alert_lock = asyncio.Lock()
 frame_lock = asyncio.Lock()
 
 _G2_STATUS_RE = re.compile(r"^(sdk_accepted|failed|cleared)$")
+
+
+def _g2_token_error(authorization: str):
+    """(status, detail) when a G2 phone request lacks the shared G2_REPORT_TOKEN, else None."""
+    token = os.getenv("G2_REPORT_TOKEN", "")
+    if not token:
+        return 503, "G2 phone reporting is not configured"
+    if not hmac.compare_digest(authorization or "", "Bearer " + token):
+        return 401, "Invalid G2 phone token"
+    return None
 
 
 def _validate_g2_report(data: dict) -> dict:
@@ -219,6 +231,24 @@ if _HAS_FASTAPI:
             {"reporting_configured": bool(os.getenv("G2_REPORT_TOKEN")), "fresh": fresh, "report": report},
             headers={"Cache-Control": "no-store"},
         )
+
+    @app.post("/wearer")
+    async def report_wearer(payload: dict, request: Request):
+        """Glasses phone reports its GPS position; the reply lists the nearest mapped hazards."""
+        error = _g2_token_error(request.headers.get("Authorization", ""))
+        if error:
+            raise HTTPException(*error)
+        try:
+            position = validate_position(payload)
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+        wearers.update(position)
+        return {"ok": True, "nearby": nearby_hazards(position, app.state.annotations.state()["annotations"])}
+
+    @app.get("/wearer")
+    async def get_wearers():
+        return JSONResponse({"configured": bool(os.getenv("G2_REPORT_TOKEN")), "wearers": wearers.fresh()},
+                            headers={"Cache-Control": "no-store"})
 
     @app.post("/latest")
     async def publish_latest(payload: dict):
@@ -448,6 +478,24 @@ else:
                     return
                 g2_report = {**validated, "received_at": datetime.now(timezone.utc).isoformat()}
                 await self._send_json(send, {"ok": True})
+                return
+
+            if method == "POST" and path == "/wearer":
+                error = _g2_token_error(headers.get("authorization", ""))
+                if error:
+                    await self._send_json(send, {"detail": error[1]}, error[0])
+                    return
+                try:
+                    position = validate_position(json.loads(await self._read_body(receive, 65536)))
+                except Exception as error:
+                    await self._send_json(send, {"detail": str(error)}, 422)
+                    return
+                wearers.update(position)
+                await self._send_json(send, {"ok": True, "nearby": []})  # no annotation service here
+                return
+
+            if method == "GET" and path == "/wearer":
+                await self._send_json(send, {"configured": bool(os.getenv("G2_REPORT_TOKEN")), "wearers": wearers.fresh()})
                 return
 
             if method == "POST" and path == "/latest":
