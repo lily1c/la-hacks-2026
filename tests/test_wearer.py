@@ -40,6 +40,19 @@ class GeometryTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 validate_position(bad)
 
+    def test_telemetry_fields(self):
+        store = WearerStore()
+        body = {"lat": 1, "lon": 2, "device": {"worn": True, "battery": 64, "bogus": 1},
+                "imu": [[1000, 0.0, 0.1, 9.8], [1100, 0.1, 0.1, 9.7], ["bad"]],
+                "inputs": [{"type": "click", "source": "ring", "t": 1}, {"type": "hack", "t": 2}]}
+        store.update(validate_position(body), now=10)
+        store.update(validate_position({"lat": 1, "lon": 2, "inputs": [{"type": "long_press", "source": "left", "t": 3}]}), now=15)
+        wearer = store.fresh(now=16)[0]
+        self.assertEqual(wearer["device"], {"worn": True, "battery": 64})
+        self.assertEqual(wearer["imu"]["n"], 2)
+        self.assertEqual(wearer["imu"]["rate_hz"], 10.0)
+        self.assertEqual([i["type"] for i in wearer["inputs"]], ["click", "long_press"])
+
     def test_store_freshness(self):
         store = WearerStore()
         store.update({"device_id": "a", "lat": 1.0, "lon": 2.0}, now=100)

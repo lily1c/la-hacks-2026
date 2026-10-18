@@ -6,6 +6,10 @@ FRESH_S = 30          # a position older than this is no longer shown
 MAX_WEARERS = 32      # bounded in-memory store for this single-process prototype
 NEARBY_LIMIT = 3
 COMPASS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
+INPUT_TYPES = {"click", "double_click", "scroll_up", "scroll_down", "long_press", "long_press_release"}
+INPUT_SOURCES = {"right", "left", "ring", "unknown"}
+MAX_IMU_SAMPLES = 120
+MAX_INPUT_LOG = 20
 
 
 def validate_position(data):
@@ -25,7 +29,49 @@ def validate_position(data):
         value = data.get(key)
         if isinstance(value, (int, float)) and math.isfinite(value) and value >= 0:
             position[key] = round(float(value), 1)
+    position.update(_validate_telemetry(data))
     return position
+
+
+def _number(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def _validate_telemetry(data):
+    """Optional glasses telemetry: device status, IMU samples [ms, x, y, z] and button presses."""
+    out = {}
+    device = data.get("device")
+    if isinstance(device, dict):
+        clean = {k: device[k] for k in ("worn", "charging", "in_case") if isinstance(device.get(k), bool)}
+        if _number(device.get("battery")) and 0 <= device["battery"] <= 100:
+            clean["battery"] = int(device["battery"])
+        out["device"] = clean
+    imu = data.get("imu")
+    if isinstance(imu, list):
+        samples = [[float(v) for v in s] for s in imu[-MAX_IMU_SAMPLES:]
+                   if isinstance(s, list) and len(s) == 4 and all(_number(v) for v in s)]
+        if samples:
+            out["imu"] = samples
+    inputs = data.get("inputs")
+    if isinstance(inputs, list):
+        out["inputs"] = [{"type": i["type"], "source": i.get("source", "unknown"), "t": float(i["t"])}
+                         for i in inputs[-MAX_INPUT_LOG:]
+                         if isinstance(i, dict) and i.get("type") in INPUT_TYPES
+                         and i.get("source", "unknown") in INPUT_SOURCES and _number(i.get("t"))]
+    return out
+
+
+def imu_stats(samples):
+    """Per-axis mean and spread, sample rate and the latest reading, for the dashboard and tuning."""
+    if not samples:
+        return None
+    axes = list(zip(*[s[1:] for s in samples]))
+    mean = [sum(a) / len(a) for a in axes]
+    spread = [math.sqrt(sum((v - m) ** 2 for v in a) / len(a)) for a, m in zip(axes, mean)]
+    span_s = (samples[-1][0] - samples[0][0]) / 1000
+    return {"n": len(samples), "rate_hz": round((len(samples) - 1) / span_s, 1) if span_s > 0 else None,
+            "last": [round(v, 4) for v in samples[-1][1:]], "mean": [round(v, 4) for v in mean],
+            "std": [round(v, 4) for v in spread], "samples": samples}
 
 
 def distance_m(a, b):
@@ -119,16 +165,28 @@ class WearerStore:
 
     def update(self, position, now=None):
         now = time.time() if now is None else now
-        if position["device_id"] not in self.positions and len(self.positions) >= MAX_WEARERS:
+        device_id = position["device_id"]
+        if device_id not in self.positions and len(self.positions) >= MAX_WEARERS:
             oldest = min(self.positions, key=lambda k: self.positions[k]["received_ts"])
             self.positions.pop(oldest)
+        previous = self.positions.get(device_id, {})
         record = {**position, "received_ts": now}
-        self.positions[position["device_id"]] = record
+        # Telemetry fields are kept until a newer report replaces them; presses accumulate.
+        for key in ("device", "imu"):
+            if key not in record and key in previous:
+                record[key] = previous[key]
+        record["inputs"] = (previous.get("inputs", []) + position.get("inputs", []))[-MAX_INPUT_LOG:]
+        self.positions[device_id] = record
         return record
 
     def fresh(self, now=None):
         now = time.time() if now is None else now
-        return [
-            {**{k: v for k, v in p.items() if k != "received_ts"}, "age_s": round(now - p["received_ts"], 1)}
-            for p in self.positions.values() if now - p["received_ts"] <= FRESH_S
-        ]
+        out = []
+        for p in self.positions.values():
+            if now - p["received_ts"] > FRESH_S:
+                continue
+            item = {k: v for k, v in p.items() if k not in ("received_ts", "imu")}
+            item["age_s"] = round(now - p["received_ts"], 1)
+            item["imu"] = imu_stats(p.get("imu"))
+            out.append(item)
+        return out

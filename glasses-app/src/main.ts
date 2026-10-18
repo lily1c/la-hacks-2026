@@ -13,6 +13,7 @@ import {
 import { parseSummary, type Summary } from './summary'
 import { pcmToWav, pcmSeconds } from './voice'
 import { startLocationReports, hazardLine, type Nearby } from './location'
+import { startTelemetry, type InputType } from './telemetry'
 
 // Where the backend serves the latest summary. Override with VITE_SUMMARY_URL in .env.local.
 const SUMMARY_URL = import.meta.env.VITE_SUMMARY_URL ?? 'http://localhost:8790/latest'
@@ -64,7 +65,8 @@ let nearby: Nearby[] = []
 let nearbyAt = 0
 let gpsSummary: Summary | null = null
 let gpsMapUrl: string | null = null
-startLocationReports(bridge, new URL('/wearer', SUMMARY_URL).href, REPORT_TOKEN, (reply) => {
+const telemetry = startTelemetry(bridge)
+startLocationReports(bridge, new URL('/wearer', SUMMARY_URL).href, REPORT_TOKEN, telemetry.collect, (reply) => {
   nearby = reply.nearby
   nearbyAt = Date.now()
   gpsSummary = reply.situation ? parseSummary(reply.situation) : null
@@ -355,9 +357,22 @@ bridge.onEvenHubEvent((event) => {
     return
   }
 
+  const sys = event.sysEvent
+  if (sys?.eventType === OsEventTypeList.IMU_DATA_REPORT) {
+    if (sys.imuData) telemetry.imu(sys.imuData.x ?? 0, sys.imuData.y ?? 0, sys.imuData.z ?? 0)
+    return
+  }
+
   // Taps arrive as sysEvent (source-aware) or textEvent depending on host version.
   const input = event.textEvent ?? event.sysEvent
   if (!input) return
+  const INPUTS: Partial<Record<number, InputType>> = {
+    [OsEventTypeList.CLICK_EVENT]: 'click', [OsEventTypeList.DOUBLE_CLICK_EVENT]: 'double_click',
+    [OsEventTypeList.SCROLL_TOP_EVENT]: 'scroll_up', [OsEventTypeList.SCROLL_BOTTOM_EVENT]: 'scroll_down',
+    [OsEventTypeList.LONG_PRESS_EVENT]: 'long_press', [OsEventTypeList.LONG_PRESS_RELEASE_EVENT]: 'long_press_release',
+  }
+  const pressed = INPUTS[input.eventType ?? OsEventTypeList.CLICK_EVENT]
+  if (pressed) telemetry.input(pressed, sys?.eventSource)
 
   switch (input.eventType) {
     case OsEventTypeList.CLICK_EVENT:

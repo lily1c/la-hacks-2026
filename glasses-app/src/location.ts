@@ -25,6 +25,7 @@ export function startLocationReports(
   bridge: EvenAppBridge,
   wearerUrl: string,
   token: string | undefined,
+  extra: () => Record<string, unknown>,
   onReply: (reply: WearerReply) => void,
 ) {
   let fix: AppLocation | null = null
@@ -54,7 +55,7 @@ export function startLocationReports(
     try {
       const here = await currentFix()
       if (!here) return
-      const body: Record<string, number | string> = { lat: here.latitude, lon: here.longitude }
+      const body: Record<string, unknown> = { ...extra(), lat: here.latitude, lon: here.longitude }
       if (import.meta.env.VITE_DEVICE_ID) body.device_id = import.meta.env.VITE_DEVICE_ID
       if (here.accuracy != null) body.accuracy_m = here.accuracy
       if (here.heading != null && here.heading >= 0) body.heading_deg = here.heading
