@@ -30,7 +30,6 @@ def _response_schema():
             },
         },
         "required": ["detected", "priority", "headline", "instructions"],
-        "additionalProperties": False,
     }
 
 
