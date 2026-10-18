@@ -1,6 +1,6 @@
 # G2 setup
 
-Installing and running the glasses app (simulator, real G2 with the hosted backend, or your own backend), including the accounts, keys and tokens a tester needs, is in [glasses-app/README.md → Install and run on G2](../glasses-app/README.md#install-and-run-on-g2).
+Installing and running the glasses app (simulator, real G2 with the hosted backend, or your own backend), including the accounts, keys and tokens a tester needs, is in [README → Install and run on G2](../README.md#install-and-run-on-g2).
 
 Notes for operators:
 - `G2_REPORT_TOKEN` (backend) must equal `VITE_G2_REPORT_TOKEN` (glasses build). It authorizes `POST /g2/display` and `POST /wearer`. Never put model API keys or `INGEST_TOKEN` in the glasses build.

@@ -1,186 +1,328 @@
 # FireSight
 
-FireSight receives paired drone JPEGs and telemetry from Beagle Eyes, analyzes frames, and serves a map dashboard and alerts to an Even Realities G2 phone app. The glasses report the wearer's GPS and sensor telemetry back, so command sees each firefighter on the map and the glasses show distance and direction to mapped fires.
+**The view from above, delivered to the people on the ground. Eyes up, hands free.**
 
-```text
-Greg's computer: drone → Beagle Eyes → HTTPS image + telemetry
-                                           ↓
-Render: receiver → analysis + Gemini map annotations → alert JSON
-           ↓                                              ↓
-       dashboard                        Even Hub phone app → G2
-           ↑                                              ↓
-           ├──────────── SDK display report ──────────────┤
-           └──── wearer GPS, IMU, buttons, SOS/man-down ──┘
+FireSight connects a drone to smart glasses. AI reads what the drone sees, marks fire and hazards on a real map, and shows the wearer, on **Even Realities G2** glasses, where the nearest hazard is, how far away it is and whether it's getting closer. The glasses send the wearer's position and status back, so a coordinator sees everyone live on one map, including **SOS** and **man-down** alerts with exact coordinates.
+
+**Live dashboard:** https://firesight-dashboard.onrender.com (free hosting; the first load after a quiet period can take up to a minute)
+
+```
+!! CRITICAL   09:52 AM                ┌────────────────────┐
+DEMO FIRE ~70 M NE                    │ ▲          ████    │
+                                      │          ██████    │
+- Closing in: 30 m nearer             │      ◎             │
+- Avoid heading NE                    │                    │
+                                      │ ─ 75 m             │
+                                      └────────────────────┘
+          What the wearer sees on the G2 glasses
 ```
 
-## Run locally
+## Contents
+- [Why FireSight](#why-firesight)
+- [Features](#features)
+- [How it works](#how-it-works)
+- [Try it](#try-it)
+- [Install and run on G2](#install-and-run-on-g2)
+- [Connect the drone](#connect-the-drone)
+- [AI map annotations (Gemini VLM)](#ai-map-annotations-gemini-vlm)
+- [Configuration](#configuration)
+- [API](#api)
+- [Deployment](#deployment)
+- [Project structure and development](#project-structure-and-development)
+- [Limitations](#limitations)
+- [Team](#team)
 
-Python 3.10+ is required. From the repository root:
+## Why FireSight
 
-```sh
-python3 -m venv .venv
-. .venv/bin/activate
-pip install -e '.[test]'
-export INGEST_MODE=push
-export FIRESIGHT_DETECTOR=opencv
-export INGEST_TOKEN=replace-with-a-private-token
-export G2_REPORT_TOKEN=replace-with-a-separate-private-token
-uvicorn firesight.api:app --host 127.0.0.1 --port 8790
+Drones already fly over wildfires, but their view usually stops at a screen: a command-post dashboard or a tablet someone has to stop and look down at. A hiker, a resident or a firefighter caught near a fire needs three answers fast: *where is the fire, how far away is it, and is it getting closer?*
+
+| Today | FireSight |
+|---|---|
+| Drone video goes to a command post; people in the field hear about it over the radio | The drone's view becomes a one-line update in the wearer's line of sight |
+| Maps and tracking live on phones and tablets you have to look down at | Hands-free on smart glasses, with no screen to check |
+| Information is about the fire, not about *you* | Distance and direction from **your GPS position**, updated as you move |
+| Man-down alarms sound locally, and command doesn't know where you are | **SOS and man-down reach the dashboard with your coordinates** in seconds |
+
+## Features
+
+**On the glasses**
+- **Nearest hazard at a glance.** Distance and direction to the nearest mapped hazard (`Fire front ~160 m NE`), plus a trend line: *Closing in* / *Moving away*. The alert turns **CRITICAL** under 100 m.
+- **Live mini-map.** North-up, with the wearer at the center and hazards at their true offset. The scale bar zooms as you approach, and the map redraws as you move.
+- **Drone alerts.** AI-written alerts from drone frames (priority, headline, short instructions), cleared automatically when stale. `NO SIGNAL` shows if the connection drops.
+- **SOS.** Hold a temple to send SOS with your location. Tap to cancel.
+- **Fall detection.** A hard impact followed by stillness asks *"Are you OK?"*. With no tap within 20 s, the glasses report **MAN DOWN**.
+- **Hands-free controls.** Tap acknowledges an alert (command sees it), swipe steps through nearby hazards, double-tap exits.
+
+**On the dashboard**
+- A map-first command view: live drone video, AI annotations on a 3D map with optional satellite imagery, and every wearer as a live marker showing motion (still / walking / tilted) and battery.
+- **Red SOS / MAN DOWN banners** with coordinates. Click a banner to zoom to the wearer.
+- A **G2 display card** showing exactly what each pair of glasses reported drawing.
+
+**AI**
+- **Gemini vision-language model (VLM)** analysis of drone frames, returning structured, glasses-sized alerts.
+- **Open-vocabulary map annotations:** describe what to mark (*"fire, smoke, people"*), and detections are projected from the image onto real latitude/longitude.
+
+## How it works
+
+```mermaid
+flowchart LR
+    D[DJI drone] -->|RTMP video| B[Beagle Eyes<br/>visual odometry + GPS transform]
+    B -->|frames + telemetry| S[FireSight backend<br/>FastAPI on Render]
+    S -->|Gemini VLM| S
+    S -->|alerts, nearest hazards, map| P[Even app on phone]
+    P <-->|Bluetooth| G[G2 glasses]
+    P -->|GPS, IMU, buttons, SOS / man-down| S
+    S --> W[Web dashboard]
 ```
 
-Open http://127.0.0.1:8790. No incoming frames is a normal waiting state. Greg uses the hosted HTTPS endpoint, not your localhost.
+1. **See.** A DJI drone streams live video to **Beagle Eyes**. It tracks the camera's position with deep visual odometry (DPVO) and geo-references each frame with a GPS transform.
+2. **Understand.** The backend analyzes frames with OpenCV or the **Gemini VLM**. Operator-prompted Gemini annotations mark hazards, and each one is projected from image pixels onto the ground as latitude/longitude.
+3. **Deliver.** The G2 app polls the backend every 2 s for alerts and reports the wearer's GPS and sensor telemetry every 5 s. Each reply carries the nearest hazards, an alert built from the wearer's position, and a 288×144 map rendered for the glasses.
+4. **Coordinate.** The dashboard shows the drone view, the annotations, every wearer, and SOS / man-down alerts.
 
-## Project structure
+## Try it
 
-| Directory | Responsibility |
-| --- | --- |
-| `src/firesight/api.py` | HTTP entry point; stable routes |
-| `src/firesight/ingestion/` | Push receiver and optional legacy bundle readers |
-| `src/firesight/analysis/` | Image/video processing, OpenCV and Gemini |
-| `src/firesight/contracts/` | Shared alert validation |
-| `src/firesight/services/` | Gemini annotations and geo projection, wearer GPS/telemetry (`wearer.py`), glasses maps (`wearer_map.py`, demo `mapview.py`), opt-in demo fire |
-| `src/firesight/dashboard/` | HTML, CSS and JavaScript served by the API |
-| `glasses-app/` | Even Hub TypeScript client |
-| `integrations/beagle_push/` | Sender installed on Greg's computer |
-| `demos/` | Synthetic inputs, separate from live ingestion |
-| `deploy/` | Docker deployment |
-| `tests/` | Receiver and API regression tests |
-| `docs/` | Architecture, contracts, setup and verification |
+| Option | You need | Time |
+|---|---|---|
+| **Dashboard only** | A browser: open the [live dashboard](https://firesight-dashboard.onrender.com) | 1 min |
+| **Glasses simulator** | A computer with Node.js 20+ and Python 3.10+ | 10 min |
+| **Real G2 glasses** | G2 glasses, an iPhone or Android phone, and the report token (from the team, or your own backend) | 15 min |
 
-Old Python module imports remain supported by compatibility modules. Greg's GPU software stays in his separate repository. The old VM deployment remains available in `vm-setup`; it is not required for this push deployment.
+## Install and run on G2
 
-## Dashboard & Beagle Eyes Integration
+### Accounts, keys and tokens
 
-The map-first FireSight dashboard (`src/firesight/dashboard/index.html`) integrates directly with **Beagle Eyes** (`vendor/beagle_eyes`) for both:
-- **Live 30 FPS video & telemetry streaming** over WebSocket (`ws://<beagle-host>:8765/ws`), displaying real-time DPVO XYZ pose, stream FPS / VO Hz, inference latency, 3D person detections, and live map trajectory.
-- **FireSight AI hazard analysis & G2 glasses alerts**, where `TelemetryBroadcaster` (`vendor/beagle_eyes/broadcast/broadcaster.py`) serves paired `firesight.frame.v1` frame + telemetry bundles on `GET /snapshot` (port `8765`) and optionally pushes bundles to `POST /ingest/beagle` when `FIRESIGHT_URL` is set.
+| What | Needed for | How to get it | Where it goes |
+|---|---|---|---|
+| **Even Realities app** with an account | Real glasses | App Store / Google Play; pair the G2 glasses in the app | Your phone |
+| **Developer Mode** | QR install | Enable it in the Even app's settings; a **Scan QR** button appears | — |
+| **Even Hub developer portal** | Package install | Sign in with your Even Realities account; run `evenhub login` once | Upload `firesight.ehpk` here |
+| **`G2_REPORT_TOKEN`** | Real glasses. Authorizes display reports, GPS, SOS and man-down. | **Hosted backend:** ask the team. **Your own backend:** any long random string (`openssl rand -base64 32`). | Backend environment **and** `glasses-app/.env.local` as `VITE_G2_REPORT_TOKEN` |
+| **`GEMINI_API_KEY`** | Optional AI analysis and annotations | [Google AI Studio](https://aistudio.google.com/apikey) (the free tier has small daily limits) | **Backend only** (`.env`) |
+| **`INGEST_TOKEN`** | Sending drone frames to a public backend | Generated by Render; ask the team | Drone sender only |
 
-### 1. Install Beagle Eyes (`vendor/beagle_eyes`)
+Everything in the glasses build can be extracted from the package, so the **only** secret it holds is `VITE_G2_REPORT_TOKEN`. Never put API keys or `INGEST_TOKEN` there.
 
-Run the installer script to clone/update `vendor/beagle_eyes`, initialize the `Deep-Visual-Odometry-SLAM` submodule cleanly, and build DPVO CUDA extensions if a CUDA toolkit is present:
+### Tools (once)
 
 ```sh
-./scripts/install_beagle_eyes.sh
-# Or skip CUDA extension compilation (e.g., when only running mock_sender.py):
-./scripts/install_beagle_eyes.sh vendor/beagle_eyes --skip-build
+node --version   # 20 or newer
+npm install -g @evenrealities/evenhub-cli @evenrealities/evenhub-simulator
+cd glasses-app && npm ci && cd ..
+python3 -m venv .venv && .venv/bin/pip install -e .   # Python 3.10+, only for a local backend
 ```
 
-### 2. Run Beagle Eyes + FireSight Dashboard (Local End-to-End)
-
-#### Terminal 1 — Start Beagle Eyes Broadcaster (Port `8765`)
-
-Activate your environment (`conda activate visual_slam` for DPVO) and start one of the Beagle Eyes sources:
+### Option 1: simulator (no glasses)
 
 ```sh
-# Option A: Mock 3D flight + telemetry (instant test, no drone or GPU needed)
-python3 vendor/beagle_eyes/broadcast/mock_sender.py
-# (Add --webcam to stream real /dev/video0 webcam video with mock 3D telemetry)
+# Terminal 1: local backend with a demo fire
+G2_REPORT_TOKEN=local-test G2_DELIVERY_ENABLED=true FIRESIGHT_DEMO_HAZARD=true \
+  .venv/bin/uvicorn firesight.api:app --port 8790
 
-# Option B: Laptop webcam + live DPVO + 3D Person Survey
-python3 vendor/beagle_eyes/scripts/webcam_vo.py --detect-people
+# Terminal 2: glasses app (the simulator has no GPS, so give it a position)
+cd glasses-app
+VITE_SUMMARY_URL=http://127.0.0.1:8790/latest VITE_G2_REPORT_TOKEN=local-test \
+VITE_TEST_LOCATION=34.0702,-118.4450 npx vite --port 5173
 
-# Option C: DJI Mini 5 Pro (RC 2) RTMP stream + live DPVO + 3D Person Survey
+# Terminal 3
+evenhub-simulator http://localhost:5173
+```
+
+Within about 10 s the glasses show **"Demo fire ~160 m NE"** with a map. The simulator's buttons: **Long Press** = SOS, **Click** = acknowledge / cancel SOS, **Up/Down** = step through hazards. The dashboard is at http://127.0.0.1:8790.
+
+### Option 2: real G2 with the hosted backend
+
+```sh
+cd glasses-app
+npm run use-backend -- https://firesight-dashboard.onrender.com/
+echo "VITE_G2_REPORT_TOKEN=<token from the team>" >> .env.local     # .env.local is git-ignored
+```
+
+Check the token. **`422` means it's correct** (the request deliberately sends an invalid position); `401` means it's wrong:
+
+```sh
+curl -s -o /dev/null -w "%{http_code}\n" -X POST https://firesight-dashboard.onrender.com/wearer \
+  -H "Authorization: Bearer $(grep '^VITE_G2_REPORT_TOKEN=' .env.local | cut -d= -f2-)" \
+  -H 'Content-Type: application/json' -d '{"lat":200}'
+```
+
+Then [install it on the glasses](#installing-on-the-glasses).
+
+### Option 3: real G2 with your own backend
+
+1. Start the backend as in Option 1, with your own long random `G2_REPORT_TOKEN`. Add `GEMINI_API_KEY` to `.env` if you have one.
+2. Give it a public HTTPS address the phone can reach, and keep it running: `cloudflared tunnel --protocol http2 --url http://localhost:8790` (`brew install cloudflared`).
+3. Build for that address:
+   ```sh
+   cd glasses-app
+   npm run use-backend -- https://<your-tunnel>.trycloudflare.com
+   echo "VITE_G2_REPORT_TOKEN=<same token as the backend>" >> .env.local
+   ```
+4. [Install it on the glasses](#installing-on-the-glasses). A tunnel restart gives a new address, so you'd need to build and install again.
+
+### Installing on the glasses
+
+**QR sideload** (quickest; the phone and computer must be on the same Wi-Fi):
+
+```sh
+cd glasses-app
+npm run dev -- --host
+evenhub qr --url "http://$(ipconfig getifaddr en0):5173"    # Linux: hostname -I
+```
+
+In the Even app, tap **Scan QR**. Campus and guest Wi-Fi often block this; if so, use the package instead.
+
+**Package upload** (works anywhere):
+1. **Increase `"version"`** in `glasses-app/app.json`. If the portal says it will *replace* an existing version, the phone keeps its old copy.
+2. Run `npm run pack` → `glasses-app/firesight.ehpk`.
+3. Upload it in the Even Hub developer portal, then update FireSight in the Even app.
+4. **Fully restart:** double-tap to exit FireSight, force-quit the Even app, reopen it and launch FireSight.
+
+On first launch, **allow Location** (precise, while using the app). The microphone permission is only used if voice reports are turned on.
+
+### What to try
+
+| Do this | What happens |
+|---|---|
+| Open FireSight | An alert and a map for the nearest hazard (e.g. *Demo fire ~160 m NE*); your marker appears on the dashboard |
+| Walk toward the hazard | The distance drops, *Closing in* appears, then **CRITICAL** under 100 m; the map zooms in |
+| Hold a temple | **SOS**: red marker and banner on the dashboard |
+| Tap | Cancels SOS / "I'm OK"; otherwise acknowledges the alert |
+| Swipe | Steps through nearby hazards |
+| Drop the glasses on a soft surface and don't tap | *Are you OK?*, then **MAN DOWN** on the dashboard after 20 s |
+| Double-tap | Exit, with the system confirmation |
+
+### Troubleshooting
+
+| What you see | Fix |
+|---|---|
+| **"Connecting to command..."** | The phone can't reach the backend. Open `<backend>/health` in the phone's browser, check the Even app shows the version you just uploaded, then fully restart FireSight. On the hosted backend, open the dashboard first so it wakes up. |
+| **"NO SIGNAL - last update Xs ago"** | The backend or tunnel stopped, or the phone lost internet. It reconnects by itself. |
+| **"Waiting for first update..."** with no hazard line | Nothing is mapped yet. Set `FIRESIGHT_DEMO_HAZARD=true`, or fly the drone with Gemini annotations. |
+| Drone alerts never appear | Set `G2_DELIVERY_ENABLED=true` on the backend. |
+| No marker on the dashboard | Run the token check (`422` = OK) and allow Location for the Even app. |
+| The portal said "replace" and nothing changed | Increase `version`, pack, upload again. |
+
+## Connect the drone
+
+Drone processing runs in **[Beagle Eyes](https://github.com/sangregoriokimpo/beagle_eyes)** on a computer with an NVIDIA GPU.
+
+```sh
+./scripts/install_beagle_eyes.sh                                   # clones into vendor/beagle_eyes, builds DPVO (CUDA)
+./scripts/install_beagle_eyes.sh vendor/beagle_eyes --skip-build   # no GPU: enough for the mock sender
+```
+
+Start a source (`conda activate visual_slam` for DPVO):
+
+```sh
+python3 vendor/beagle_eyes/broadcast/mock_sender.py              # simulated flight, no drone or GPU
+python3 vendor/beagle_eyes/scripts/webcam_vo.py --detect-people  # laptop webcam + DPVO
 python3 vendor/beagle_eyes/scripts/uav_vo.py \
   --config vendor/beagle_eyes/config/uav_config.yaml \
-  --plot-mode 3d --stride 2 --vo-scale 0.5 --detect-people
+  --detect-people --gps-tf --gps-origin <launch lat>,<launch lon> --gps-autocal   # DJI Mini 5 Pro over RTMP
 ```
 
-When running, `TelemetryBroadcaster` serves on port `8765`:
-- `ws://<ip>:8765/ws` — Live 30 FPS binary JPEG frames + 30 Hz JSON telemetry
-- `http://<ip>:8765/video.mjpg` — Live MJPEG video stream
-- `http://<ip>:8765/snapshot` — Paired `firesight.frame.v1` JSON bundle (`jpeg_base64`, `sha256`, `telemetry`, `metadata`)
-- `http://<ip>:8765/status` — Broadcaster health and client count
+Beagle Eyes serves `ws://<host>:8765/ws` (live video and telemetry for the dashboard), `/snapshot` (paired frame + telemetry) and `/status`.
 
-#### Terminal 2 — Start FireSight API & Dashboard (Port `8787`)
+**Connecting it to FireSight:**
+- **Push to a hosted backend (recommended):** on the backend set `INGEST_MODE=push` and `INGEST_TOKEN`. On the drone computer set `FIRESIGHT_URL=https://<backend>` and the same `INGEST_TOKEN`, then start Beagle Eyes. Frames and telemetry are pushed to `POST /ingest/beagle`. See [integrations/beagle_push](integrations/beagle_push/README.md).
+- **Same machine or LAN:** the backend polls `BEAGLE_URL` (default `http://127.0.0.1:8765/snapshot`), and the dashboard's **System links** field (or `?beagle=<host>:8765`) points the browser at the live stream.
+
+`--gps-tf` is what places annotations on the map. Without it, hazards can't be given coordinates, and the glasses can't show distances to them.
+
+## AI map annotations (Gemini VLM)
+
+In the dashboard's **Gemini annotations** card, type what to mark (or pick a preset), then press **Annotate now** or turn on **Auto**. Gemini returns regions in the frame. FireSight casts them onto the ground with the drone's camera pose, draws them on the map, and the glasses measure distance and direction to them. Annotations expire after 60 s.
+
+Put the key in a git-ignored `.env` at the repository root: `cp .env.example .env`, then set `GEMINI_API_KEY`. Placement is approximate until the drone's scale is calibrated.
+
+## Configuration
+
+**Backend** (environment variables or `.env`):
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `G2_REPORT_TOKEN` | — | Shared secret for the glasses (display reports, `/wearer`). Required for glasses features. |
+| `G2_DELIVERY_ENABLED` | `false` | `true` delivers drone-frame alerts to the glasses. GPS alerts, map, SOS and man-down work either way. |
+| `INGEST_MODE` | — | `push` to accept frames from Beagle Eyes at `/ingest/beagle` |
+| `INGEST_TOKEN` | — | Secret for frame ingestion (and uploads when public) |
+| `PUBLIC_DEPLOYMENT` | — | `true` protects write endpoints with `INGEST_TOKEN` |
+| `BEAGLE_URL`, `BEAGLE_EXPORT_TOKEN` | local | Poll Beagle Eyes snapshots instead of push |
+| `FIRESIGHT_DETECTOR` | `auto` | `opencv`, `gemini`, or `auto` (Gemini if a key is set) |
+| `GEMINI_API_KEY` | — | Enables Gemini analysis and annotations |
+| `GEMINI_MODEL`, `GEMINI_ANNOTATE_MODEL` | built-in | Models for frame analysis and annotations |
+| `FIRESIGHT_SCENARIO` | — | Path to a JSON field-context file; Gemini writes action instructions from it |
+| `FIRESIGHT_GEMINI_FALLBACK` | — | `opencv` analyzes a frame locally when Gemini fails |
+| `FIRESIGHT_DEMO_HAZARD` | — | `true` places a labeled demo fire near the first wearer (try GPS features without a drone) |
+| `FIRESIGHT_DEMO_HAZARD_M` | `180` | Demo fire distance in metres |
+| `FIRESIGHT_DEMO_MAP` | — | `true` adds the illustrative `/view.png` map to drone alerts |
+
+**Glasses app** (`glasses-app/.env.local`):
+
+| Variable | Purpose |
+|---|---|
+| `VITE_SUMMARY_URL` | Backend alert URL (set by `npm run use-backend`) |
+| `VITE_G2_REPORT_TOKEN` | Must equal the backend's `G2_REPORT_TOKEN` |
+| `VITE_FALL_G` | Fall threshold in g (default 3) |
+| `VITE_DEVICE_ID` | Wearer name on the dashboard (default `g2`) |
+| `VITE_TEST_LOCATION` | `lat,lon` for the simulator, which has no GPS |
+| `VITE_ENABLE_VOICE_REPORTS` | `true`: hold records audio instead of sending SOS (no backend receiver yet) |
+
+## API
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /latest` | Current drone alert for the glasses (`204` if none, stale, or delivery paused) |
+| `POST /wearer` | Glasses report GPS + telemetry; the reply has the nearest hazards, a GPS-built alert and a `map_url` |
+| `GET /wearer`, `GET /wearer/map.png` | Live wearers for the dashboard; the map image for a wearer's glasses |
+| `POST /g2/display`, `GET /g2/status` | What the glasses displayed |
+| `POST /ingest/beagle` | Paired frame + telemetry from Beagle Eyes (push mode) |
+| `GET /live` | Latest analyzed drone frame and receiver status |
+| `GET /annotations`, `POST /annotations/config`, `POST /annotations/run`, `DELETE /annotations` | Gemini map annotations |
+| `POST /frame`, `POST /video`, `POST /latest` | Manual frame/video analysis and alert publishing |
+| `GET /health` | Readiness check |
+
+Full request and response details: [docs/api-contracts.md](docs/api-contracts.md).
+
+## Deployment
+
+`render.yaml` deploys the backend and dashboard to [Render](https://render.com) as one Docker service from `main`. It runs one worker with in-memory state, push ingestion and a public dashboard, and generates separate `INGEST_TOKEN` and `G2_REPORT_TOKEN` values; keep both private. Changing a setting restarts the service, which clears live wearers and alerts. On the free plan the service sleeps after about 15 minutes idle.
+
+## Project structure and development
+
+| Path | What's there |
+|---|---|
+| `src/firesight/api.py` | HTTP API and dashboard server |
+| `src/firesight/analysis/` | OpenCV and Gemini frame analysis, annotation detection |
+| `src/firesight/ingestion/` | Beagle Eyes push receiver and snapshot polling |
+| `src/firesight/services/` | Annotations and geo projection, wearer GPS/telemetry, glasses maps, demo fire |
+| `src/firesight/dashboard/` | Map-first web dashboard (HTML/CSS/JS, MapLibre) |
+| `glasses-app/` | Even Realities G2 app (TypeScript, Even Hub SDK). See [glasses-app/README.md](glasses-app/README.md). |
+| `integrations/` | Beagle Eyes sender and adapters |
+| `demos/` | Frame and alert feeders for demos ([docs/demos.md](docs/demos.md)) |
+| `deploy/`, `render.yaml` | Docker image and Render blueprint |
+| `docs/` | Architecture, API contracts, testing |
+
+Tests:
 
 ```sh
-PYTHONPATH=src uvicorn firesight.api:app --host 0.0.0.0 --port 8787
+.venv/bin/pip install -e '.[test]'
+FIRESIGHT_DETECTOR=opencv .venv/bin/python -m unittest discover -s tests
+cd glasses-app && node --test tests/*.test.mjs
 ```
 
-Open **http://127.0.0.1:8787/** in your browser:
-- By default, the FireSight backend automatically polls `http://127.0.0.1:8765/snapshot`, runs the configured fire/hazard detector (`opencv` or `gemini`), updates `/live` and `/latest` for the G2 glasses app, and forwards matched metadata.
-- Meanwhile, the browser dashboard connects directly to `ws://127.0.0.1:8765/ws` for zero-lag 30 FPS video, live XYZ coordinates, FPS / VO Hz, 3D person detections, and live drone path rendering on the 3D map.
+## Limitations
 
-### 3. Cross-Laptop / Remote Connection Options
+FireSight is a hackathon prototype, **not certified safety equipment** or evacuation guidance.
+- **Directions are GPS compass directions** (N, NE, …). They're reliable beyond about 25 m. The glasses can't sense which way the head is turned (no magnetometer), and their "worn" flag doesn't change when they're taken off.
+- **Hazard positions are approximate** until the drone's scale is calibrated. A single frame can't establish safe routes.
+- **The dashboard and read endpoints are public,** so use demo imagery only. State is in memory and is lost on restart.
+- **Not built yet:** a voice-report receiver (`POST /report`), offline mode, and read authentication.
 
-If Beagle Eyes (Laptop A) and the FireSight dashboard/backend (Laptop B or Render) are on separate machines:
+## Team
 
-- **Same LAN / Cloudflare Tunnel (Browser WS + Backend Poll)**:
-  - Point the dashboard's **System links** host input (or URL query param `?beagle=<laptop-A-ip>:8765` or `https://xxxx.trycloudflare.com`) to Laptop A.
-  - On the FireSight backend, set `BEAGLE_URL='http://<laptop-A-ip>:8765/snapshot'` (and optional shared `BEAGLE_EXPORT_TOKEN`).
-- **Outbound Push from Beagle Eyes to Hosted FireSight (`INGEST_MODE=push`)**:
-  - On the hosted FireSight backend, set `INGEST_MODE=push` and `INGEST_TOKEN='<shared-secret>'`.
-  - On Laptop A running Beagle Eyes, set `FIRESIGHT_URL='https://your-firesight-host.onrender.com'` and `INGEST_TOKEN='<shared-secret>'` before launching `uav_vo.py`, `webcam_vo.py`, or `mock_sender.py`. `TelemetryBroadcaster` will automatically push paired frames and telemetry to `/ingest/beagle` in the background.
-
-## Gemini map annotations
-
-Tell Gemini what to mark; it returns regions in the drone frame, which are cast onto the ground and drawn on the map. Use the **Gemini annotations** card in the dashboard: type an instruction (or pick a preset such as *Car crash* or *Trees*), press **Annotate now** or turn on **Auto**, and toggle layers per kind.
-
-**API key.** Create a key in [Google AI Studio](https://aistudio.google.com/apikey) and put it in a git-ignored `.env` at the repository root (the server loads it at startup; real environment variables win):
-
-```sh
-cp .env.example .env     # then edit GEMINI_API_KEY=...
-```
-
-Never commit `.env`, and never put the key in the dashboard or glasses app. Optional settings: `GEMINI_ANNOTATE_MODEL` (fast model for annotations, default `gemini-3.5-flash-lite`; use a model your key can access) and `GEMINI_MODEL` (frame analysis).
-
-**Placement needs geo telemetry.** Start Beagle Eyes with `--gps-tf` (see `vendor/beagle_eyes/gps_tf/README.md`):
-
-```sh
-python scripts/uav_vo.py --detect-people --gps-tf --gps-origin 34.070233,-118.445185 \
-  --gps-heading 0 --gps-cam-pitch 0 --gps-start-height 1.5 --gps-autocal
-```
-
-Without it, Gemini still runs but annotations are listed as "not placed". Results are approximate until scale is calibrated.
-
-API: `GET /annotations`, `POST /annotations/config` (`prompt`, `auto`, `interval_s`), `POST /annotations/run`, `DELETE /annotations`.
-Latency: frames are downscaled to 768 px, thinking is minimal, and calls run off the video path. Annotations expire after 60 s.
-
-## G2 glasses: what works
-
-The glasses app is in [`glasses-app/`](glasses-app/README.md). **To install and run it on G2 (or the simulator), including the accounts, keys and tokens a tester needs, see [Install and run on G2](glasses-app/README.md#install-and-run-on-g2).** Tested on real G2 glasses:
-
-- **Alerts:** the latest drone-frame alert (priority, headline, instructions), refreshed every 2 s. Alerts older than 15 s are cleared; `NO SIGNAL` shows when the backend is unreachable.
-- **Wearer GPS:** the phone's GPS goes to `POST /wearer` every 5 s. The reply lists the nearest mapped hazards (Gemini annotations placed by `gps_tf`), and the glasses show e.g. `>> Fire front: ~180 m NE`.
-- **GPS-built alert and map:** with no drone alert active, the glasses show an alert built from GPS (distance, direction, "Closing in" / "Moving away") and a north-up map around the wearer with hazards at their true offset and a zooming scale bar. It updates as the wearer moves.
-- **Telemetry:** IMU (accelerometer, 10 Hz), button presses with their source (right/left temple, R1 ring) and battery/charging. The backend derives a motion state: still, walking or tilted.
-- **Safety:** an impact above 3 g followed by stillness asks "Are you OK?"; no tap within 20 s reports **MAN DOWN**. Holding a temple sends **SOS**. Both turn the wearer red on the dashboard map with a banner.
-- **Controls:** tap = I'm OK / cancel SOS / acknowledge the alert; hold = SOS; scroll = step through nearby hazards; double-tap = exit.
-- **Dashboard:** each wearer is a marker on the map with motion and battery, and the G2 card shows what the glasses reported displaying (or a recorded demo when no phone is reporting).
-
-Limits: directions are compass directions from GPS (about ±3° at 160 m, unreliable under ~25 m). The glasses can't sense which way the head is turned (no magnetometer), and their "worn" flag does not change when the glasses are taken off.
-
-To try the GPS features without a drone, set `FIRESIGHT_DEMO_HAZARD=true` on the backend: a "Demo fire" is placed 180 m north-east of the first wearer (`FIRESIGHT_DEMO_HAZARD_M` to change the distance) and stays put, so walking changes the distance. Real annotations replace it.
-
-## G2 display monitor and API
-
-The dedicated G2 panel polls the same GET /latest endpoint used by the glasses app, independently of manual/drone preview. The left side shows the outgoing alert formatted approximately like the G2 text layout (9 lines, 44 characters). It is not a hardware screenshot; maps, microphone status, local time zone and transient phone messages may differ.
-
-The right side shows the exact rendered_text supplied by the phone app, with alert ID and server receipt time. Until the phone integrates the report call, it correctly says display unconfirmed. Reports expire as connection evidence after 15 seconds. The SDK accepting an update is not proof the wearer saw it.
-
-The glasses app sends these reports with `VITE_G2_REPORT_TOKEN` (the backend's `G2_REPORT_TOKEN`), only after the SDK accepts an update, plus a heartbeat every five seconds; it reports `failed` on an SDK failure and `cleared` when clearing expired content. The same token authorizes `POST /wearer`.
-
-GET /g2/status is read by the dashboard and returns reporting_configured, fresh and report. POST /g2/display requires the separate shared token (503 when unset, 401 when incorrect), a nonempty alert_id up to 128 characters, rendered_text up to 2048 characters, and status sdk_accepted/failed/cleared. It retains the last report in memory for this single-device prototype. Restarting clears it. Use HTTPS for remote connections and never use the model API key as the report token. Configure VITE_SUMMARY_URL and the Even Hub network whitelist to the same reachable backend origin. A phone’s localhost does not refer to this computer.
-
-## Render deployment
-
-Use the root render.yaml Blueprint on branch main. It deploys the Docker backend and dashboard together, binds Render's PORT and runs one worker (latest alerts and phone reports are process-local). Free hosting can sleep after inactivity; restarts clear current state. This is a hackathon deployment, not durable incident storage.
-
-The Blueprint defaults to OpenCV and generates separate INGEST_TOKEN and G2_REPORT_TOKEN values. Copy G2_REPORT_TOKEN privately from Render into the phone app's VITE_G2_REPORT_TOKEN and rebuild using the actual Render URL. Never commit either token. Enter INGEST_TOKEN in the dashboard upload field to analyze manual frames; POST /frame, /video and /latest require it in hosted mode. The token is kept only in the input, not browser storage. Uploads are limited to 15 MiB in hosted mode.
-
-The dashboard and read endpoints are public in this prototype. Only use demo imagery suitable for the project's public dashboard. Private incident deployment requires read authentication too.
-
-Leave BEAGLE_URL unset until Greg provides a reachable endpoint. Render cannot connect directly to 172.20.10.2 or another laptop's private LAN IP. Greg must provide an HTTPS tunnel/private network connection to his authenticated snapshot exporter; then configure BEAGLE_URL and BEAGLE_EXPORT_TOKEN in Render. Do not expose the export token in URLs. No GPU is required for the default OpenCV backend. Configuring Gemini requires a separate server-side API key and provider-supported model.
-
-## Setup and verification
-
-- [Greg's sender](integrations/beagle_push/README.md)
-- [Glasses setup](docs/glasses-setup.md)
-- [Architecture and branch decisions](docs/architecture.md)
-- [API contracts](docs/api-contracts.md)
-- [Testing](docs/testing.md)
-- [Demo instructions](docs/demos.md)
-
-Render uses `render.yaml`, targeting `main`. An existing manually configured Render service may still require its branch setting to be changed in the dashboard. Keep existing tokens unchanged when deploying.
-
-OpenCV is a color heuristic. Gemini is optional and requires an API key and a model available to your account via `GEMINI_MODEL`. This project does not currently implement Llama or ElevenLabs. Drone telemetry is relative odometry unless `gps_tf` geo-referencing is running. The demo `/view.png` map is not geographic navigation; the wearer map (`/wearer/map.png`) is drawn from real GPS and annotation coordinates. A voice-report receiver (`POST /report`) is not implemented.
+Built at **LA Hacks 2026** by:
+- [@sangregoriokimpo](https://github.com/sangregoriokimpo): drone pipeline (Beagle Eyes, GPS transform), Gemini map annotations
+- Lucy Liu: frame analysis and Gemini integration
+- [@lily1c](https://github.com/lily1c): dashboard, ingestion and deployment
+- [@Dakshaarvind](https://github.com/Dakshaarvind): G2 glasses app, wearer GPS and telemetry, SOS and man-down
