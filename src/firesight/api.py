@@ -399,7 +399,7 @@ else:
                 if asset.parent != assets_dir or not asset.is_file():
                     await self._send_json(send, {"detail": "Not found"}, 404)
                     return
-                kind = {".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8"}.get(asset.suffix, "application/octet-stream")
+                kind = {".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".mp4": "video/mp4"}.get(asset.suffix, "application/octet-stream")
                 await self._send_response(send, 200, asset.read_bytes(), kind)
                 return
 

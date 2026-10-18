@@ -30,4 +30,4 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-firesight = ["dashboard/*.html", "dashboard/*.js", "dashboard/*.css"]
+firesight = ["dashboard/*.html", "dashboard/*.js", "dashboard/*.css", "dashboard/*.mp4"]
