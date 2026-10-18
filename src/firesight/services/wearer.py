@@ -45,6 +45,10 @@ def _validate_telemetry(data):
         clean = {k: device[k] for k in ("worn", "charging", "in_case") if isinstance(device.get(k), bool)}
         if _number(device.get("battery")) and 0 <= device["battery"] <= 100:
             clean["battery"] = int(device["battery"])
+        if isinstance(device.get("imu_on"), bool):
+            clean["imu_on"] = device["imu_on"]
+        if _number(device.get("imu_events")) and device["imu_events"] >= 0:
+            clean["imu_events"] = int(device["imu_events"])
         out["device"] = clean
     imu = data.get("imu")
     if isinstance(imu, list):

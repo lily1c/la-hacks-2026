@@ -206,6 +206,8 @@ if (result !== 0) {
   const rebuilt = await bridge.rebuildPageContainer(new RebuildPageContainer(page(shown)))
   if (!rebuilt) console.error('createStartUpPageContainer failed:', result)
 }
+// The IMU (like the microphone) needs the startup page to exist first.
+telemetry.enableImu()
 
 let refreshing = false
 

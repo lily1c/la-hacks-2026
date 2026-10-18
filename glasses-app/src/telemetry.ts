@@ -12,11 +12,14 @@ export function startTelemetry(bridge: EvenAppBridge) {
   const imu: number[][] = []  // [unix ms, x, y, z]
   const inputs: { type: InputType; source: string; t: number }[] = []
   let device: Record<string, boolean | number> | null = null
+  let imuOn = false
+  let imuEvents = 0
 
-  // P100 = report every 100 ms.
-  bridge.imuControl(true, ImuReportPace.P100)
-    .then((ok) => { if (!ok) console.warn('IMU unavailable') })
-    .catch(() => console.warn('IMU unavailable'))
+  // P100 = report every 100 ms. Like the microphone, this only works once the startup page exists.
+  async function enableImu() {
+    try { imuOn = await bridge.imuControl(true, ImuReportPace.P100) } catch { imuOn = false }
+    if (!imuOn) console.warn('IMU unavailable')
+  }
 
   function setDevice(status?: DeviceStatus | null) {
     if (!status) return
@@ -27,11 +30,15 @@ export function startTelemetry(bridge: EvenAppBridge) {
     if (status.isInCase != null) next.in_case = status.isInCase
     device = next
   }
-  bridge.getDeviceInfo().then((info) => setDevice(info?.status)).catch(() => {})
+  // Status-change callbacks don't reliably fire, so re-read the status before every report too.
+  const refreshDevice = () => bridge.getDeviceInfo().then((info) => setDevice(info?.status)).catch(() => {})
+  refreshDevice()
   bridge.onDeviceStatusChanged(setDevice)
 
   return {
+    enableImu,
     imu(x: number, y: number, z: number) {
+      imuEvents += 1
       imu.push([Date.now(), x, y, z])
       if (imu.length > MAX_SAMPLES) imu.shift()
     },
@@ -44,7 +51,10 @@ export function startTelemetry(bridge: EvenAppBridge) {
       const body: Record<string, unknown> = {}
       if (imu.length) body.imu = imu.splice(0)
       if (inputs.length) body.inputs = inputs.splice(0)
-      if (device) body.device = device
+      body.device = { ...(device ?? {}), imu_on: imuOn, imu_events: imuEvents }
+      refreshDevice()  // for the next report
+      // Retry until the IMU starts streaming.
+      if (!imuEvents) enableImu()
       return body
     },
   }
