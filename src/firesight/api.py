@@ -253,3 +253,13 @@ async def ingest_beagle(request: Request):
     except (ValueError, KeyError, TypeError, AttributeError) as error:
         raise HTTPException(422, "Invalid frame bundle: " + str(error)) from error
     return JSONResponse(result, status_code=202 if result["accepted"] else 200)
+
+
+@app.get("/phone", include_in_schema=False)
+async def phone_capture():
+    return FileResponse(Path(__file__).parent / "dashboard" / "phone.html")
+
+
+@app.get("/phone.js", include_in_schema=False)
+async def phone_script():
+    return FileResponse(Path(__file__).parent / "dashboard" / "phone.js", media_type="text/javascript")

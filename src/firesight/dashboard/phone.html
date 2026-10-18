@@ -1,0 +1,8 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FireSight · Phone camera</title>
+<style>body{margin:0;background:#edf2e9;color:#253d31;font:16px system-ui}main{max-width:600px;margin:auto;padding:24px}h1{letter-spacing:-1px}video{width:100%;max-height:55vh;background:#18251e;border-radius:16px}input[type=password]{box-sizing:border-box;width:100%;padding:14px;border:1px solid #a7b8a7;border-radius:8px;font:inherit}button{padding:14px 24px;border:0;border-radius:10px;background:#325d47;color:white;font:inherit;margin:12px 8px 12px 0}button:disabled{opacity:.45}p{line-height:1.5}small{display:block;margin:12px 0;color:#526955}label{display:block;margin:18px 0}#status{padding:16px;background:white;border-radius:10px;overflow-wrap:anywhere}</style>
+<main><a href="/">← Dashboard</a><h1>Phone camera</h1><p>Use your phone as a test camera. Keep this page open and the screen awake. Sends up to one snapshot per second; use one sender at a time.</p>
+<label>Ingest token<input id="token" type="password" autocomplete="off" placeholder="Your Render INGEST_TOKEN"></label>
+<label><input id="gps" type="checkbox"> Include this phone’s GPS location</label><small>Images and any GPS you include are sent to FireSight. The current dashboard API is public: anyone with its URL can read them. GPS is optional.</small>
+<video id="video" autoplay muted playsinline></video><canvas id="canvas" hidden></canvas>
+<div><button id="start">Start camera</button><button id="stop" disabled>Stop</button></div><p id="status" role="status" aria-live="polite">Ready. Camera and location are off.</p><small id="location">GPS off</small>
+</main><script src="/phone.js" defer></script></html>
