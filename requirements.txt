@@ -1,6 +1,2 @@
-opencv-python
-numpy
-fastapi
-uvicorn
-python-multipart
-google-genai>=1.0.0
+# Dependencies are maintained in pyproject.toml.
+.

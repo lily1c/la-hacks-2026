@@ -3,10 +3,12 @@ services:
     name: firesight-dashboard
     runtime: docker
     plan: free
-    branch: feature/dashboard
+    branch: main
     dockerfilePath: ./deploy/Dockerfile
     healthCheckPath: /health
     envVars:
+      - key: INGEST_MODE
+        value: push
       - key: FIRESIGHT_DETECTOR
         value: opencv
       - key: G2_REPORT_TOKEN
