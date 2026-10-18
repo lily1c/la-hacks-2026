@@ -186,6 +186,8 @@ if _HAS_FASTAPI:
 
     @app.get("/latest")
     async def get_latest():
+        if os.getenv("G2_DELIVERY_ENABLED", "false").lower() != "true":
+            return Response(status_code=204, headers={"X-FireSight-Delivery": "paused"})
         async with alert_lock:
             try:
                 expired = latest_alert is None or not 0 <= time.time() - timestamp(latest_alert["timestamp"]) <= 30
@@ -467,6 +469,9 @@ else:
                 return
 
             if method == "GET" and path == "/latest":
+                if os.getenv("G2_DELIVERY_ENABLED", "false").lower() != "true":
+                    await self._send_response(send, 204, b"", "text/plain")
+                    return
                 async with alert_lock:
                     try:
                         expired = latest_alert is None or not 0 <= time.time() - timestamp(latest_alert["timestamp"]) <= 30
