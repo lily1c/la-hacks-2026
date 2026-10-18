@@ -8,6 +8,7 @@ import sys
 import cv2
 
 from firesight.frame import analyze_frame
+from firesight.gemini import GeminiRequestError
 from firesight.video import analyze_video
 
 
@@ -38,7 +39,7 @@ def main(argv=None):
             output.write("\n")
         os.replace(temp_path, output_path)
         print(output_path)
-    except (OSError, ValueError, cv2.error) as error:
+    except (OSError, ValueError, GeminiRequestError, cv2.error) as error:
         print(f"Error: {error}", file=sys.stderr)
         return 1
     return 0

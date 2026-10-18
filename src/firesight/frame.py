@@ -3,7 +3,7 @@ import cv2
 import numpy as np
 
 from firesight.alerts import build_alert
-from firesight.snowflake import analyze_image_with_snowflake, selected_detector
+from firesight.detector import selected_detector
 from firesight.vision import analyze_image, rank_fire_cells
 
 SUPPORTED_IMAGE_TYPES = {"image/jpeg", "image/png"}
@@ -23,9 +23,11 @@ def analyze_frame(image_bytes, media_type, rows=4, cols=4, top=3, width=640):
     if image is None:
         raise ValueError("Could not decode frame; send a valid JPEG or PNG")
 
-    if selected_detector() == "snowflake":
-        return analyze_image_with_snowflake(image_bytes, normalized_type)
+    detector = selected_detector()
+    if detector == "gemini":
+        from firesight.gemini import analyze_image_with_gemini
 
+        return analyze_image_with_gemini(image_bytes, normalized_type)
     if width > 0 and image.shape[1] > width:
         scale = width / image.shape[1]
         image = cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)

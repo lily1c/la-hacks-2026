@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "firesight"
 version = "0.1.0"
-description = "OpenCV drone-video fire alert service"
+description = "Gemini vision wildfire frame analyzer with OpenCV fallback"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -14,6 +14,7 @@ dependencies = [
   "fastapi",
   "uvicorn",
   "python-multipart",
+  "google-genai>=1.0.0",
 ]
 
 [project.scripts]
