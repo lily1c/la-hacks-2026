@@ -13,6 +13,7 @@ import time
 import cv2
 
 from firesight.alerts import validate_alert
+from firesight.mapview import render_map
 from firesight.frame import SUPPORTED_IMAGE_TYPES, analyze_frame
 from firesight.gemini import GeminiConfigurationError, GeminiRequestError
 from firesight.live import BundleWatcher, RemoteBeagleWatcher, timestamp
@@ -135,7 +136,24 @@ if _HAS_FASTAPI:
                 expired = True
             if expired:
                 return Response(status_code=204)
-            return JSONResponse(content=latest_alert)
+            alert = latest_alert
+        if os.getenv("FIRESIGHT_DEMO_MAP") == "true":
+            # Placeholder map for demos; the glasses re-download it only when map_url changes.
+            # Gemini reports fire_sector; the OpenCV detector names it in "Check <sector> frame sector".
+            sector = alert.get("fire_sector")
+            if not sector:
+                matches = (re.match(r"Check (.+) frame sector", line) for line in alert["instructions"])
+                match = next((m for m in matches if m), None)
+                sector = match.group(1) if match else "none"
+            alert = {**alert, "map_url": f"/view.png?v={alert['id']}&dir={sector}"}
+        return JSONResponse(content=alert)
+
+    @app.get("/view.png")
+    async def get_view(v: str = "", dir: str = ""):
+        """Placeholder tactical map; fire placed in the reported sector, details seeded by v."""
+        if os.getenv("FIRESIGHT_DEMO_MAP") != "true":
+            return Response(status_code=404)
+        return Response(content=await asyncio.to_thread(render_map, v, dir or None), media_type="image/png")
 
     @app.post("/g2/display")
     async def report_g2_display(payload: dict, request: Request):

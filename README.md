@@ -1,5 +1,7 @@
 # FireSight
 
+> **Try the whole pipeline yourself:** [DEMO.md](DEMO.md) walks through feeding frames to the API and seeing the analysis on G2 glasses or the simulator.
+
 FireSight accepts one JPEG or PNG frame per request. The drone pipeline can send a new frame once per second; when a Gemini API key is configured, each frame is analyzed by a Gemini vision language model and a compact alert is published for the glasses app. The local OpenCV detector remains available as a fallback. A batch video endpoint remains available for local clips and uses OpenCV.
 
 ## Project layout

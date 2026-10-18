@@ -1,4 +1,6 @@
 """Gemini vision-language inference for individual JPEG and PNG frames."""
+import copy
+import hashlib
 import json
 import os
 from datetime import datetime, timezone
@@ -9,12 +11,21 @@ DEFAULT_MODEL = "gemini-3.8-flash"
 MAX_IMAGE_BYTES = 14 * 1024 * 1024
 
 
+# Results by image + prompt + model, so a repeated frame doesn't spend API quota again.
+_cache = {}
+CACHE_LIMIT = 256
+
+
 class GeminiConfigurationError(ValueError):
     """Gemini detection was selected but its API key is missing."""
 
 
 class GeminiRequestError(RuntimeError):
     """Gemini could not analyze the image or returned an invalid response."""
+
+
+FIRE_SECTORS = ["upper-left", "upper", "upper-right", "left", "center", "right",
+                "lower-left", "lower", "lower-right", "none"]
 
 
 def _response_schema():
@@ -28,10 +39,41 @@ def _response_schema():
                 "type": "array",
                 "items": {"type": "string"},
             },
+            "fire_sector": {"type": "string", "enum": FIRE_SECTORS},
         },
-        "required": ["detected", "priority", "headline", "instructions"],
-        "additionalProperties": False,
+        "required": ["detected", "priority", "headline", "instructions", "fire_sector"],
     }
+
+
+def _load_scenario():
+    """Field context (wind, routes, crews) from FIRESIGHT_SCENARIO, a JSON file path. None if unset."""
+    path = os.getenv("FIRESIGHT_SCENARIO", "").strip()
+    if not path:
+        return None
+    try:
+        with open(path, encoding="utf-8") as file:
+            return json.load(file)
+    except (OSError, ValueError) as error:
+        raise GeminiConfigurationError(f"Could not read FIRESIGHT_SCENARIO file {path}: {error}") from error
+
+
+def _tactical_prompt(scenario):
+    return (
+        "You are a wildfire incident assistant writing heads-up-display alerts for a "
+        "firefighter on the ground. You get one drone image and the field context below. "
+        "Use the image for where flames and smoke are and how intense they look. Use ONLY "
+        "the field context for distances, routes, safe zones, wind, hazards and crews; never "
+        "invent any that are not in it. Treat the top of the image as straight ahead of the "
+        "wearer. Set detected=true only for visible flames or fire smoke, not sunsets, "
+        "clouds, dust or fog. priority: critical if the wearer must act now, warning if "
+        "they should be ready to move, info if nothing urgent. headline: the single most "
+        "important situation, under 40 characters, e.g. 'Fire spreading ahead and right'. "
+        "instructions: 2 to 4 short imperative actions, most urgent first, each under 40 "
+        "characters, e.g. 'Move down-right to creek trail' or 'Do NOT go back - spot fire'. "
+        "fire_sector: where the main fire is in the image, or none. If detected=false, "
+        "return priority=info, headline='No fire detected in frame', no instructions and "
+        "fire_sector=none.\n\nField context:\n" + json.dumps(scenario, indent=2)
+    )
 
 
 def analyze_image_with_gemini(image_bytes, media_type):
@@ -46,7 +88,8 @@ def analyze_image_with_gemini(image_bytes, media_type):
     if media_type not in ("image/jpeg", "image/png"):
         raise ValueError("Frame must be a JPEG or PNG image")
 
-    prompt = (
+    scenario = _load_scenario()
+    prompt = _tactical_prompt(scenario) if scenario else (
         "You are a visual wildfire detection model analyzing one drone image. "
         "Return only the requested JSON fields. Set detected=true only when visible "
         "flames or fire-generated smoke support an active wildfire; do not mistake "
@@ -55,10 +98,14 @@ def analyze_image_with_gemini(image_bytes, media_type):
         "and info when no fire is visible. Keep the headline and each instruction "
         "under 40 characters. Instructions must be brief and describe only visible "
         "relative image locations. Never invent distances, compass directions, safe "
-        "routes, crew locations, or evacuation advice. If detected=false, return "
-        "priority=info, headline='No fire detected in frame', and no instructions."
+        "routes, crew locations, or evacuation advice. Set fire_sector to where the main "
+        "fire is in the image, or none. If detected=false, return priority=info, "
+        "headline='No fire detected in frame', no instructions and fire_sector=none."
     )
     model = os.getenv("GEMINI_MODEL", DEFAULT_MODEL).strip() or DEFAULT_MODEL
+    cache_key = hashlib.sha256(image_bytes + prompt.encode() + model.encode()).hexdigest()
+    if cache_key in _cache:
+        return _finish(copy.deepcopy(_cache[cache_key]))
 
     try:
         from google import genai
@@ -91,6 +138,14 @@ def analyze_image_with_gemini(image_bytes, media_type):
 
     if not isinstance(result, dict) or not isinstance(result.get("detected"), bool):
         raise GeminiRequestError("Gemini returned an invalid detection result")
+    if len(_cache) >= CACHE_LIMIT:
+        _cache.pop(next(iter(_cache)))
+    _cache[cache_key] = copy.deepcopy(result)
+    return _finish(result)
+
+
+def _finish(result):
+    """Normalize a parsed Gemini result into a glasses alert with a fresh id and timestamp."""
     if not result["detected"]:
         result = {
             "priority": "info",
@@ -108,7 +163,11 @@ def analyze_image_with_gemini(image_bytes, media_type):
             instructions = []
         result["instructions"] = [line[:40] for line in instructions if isinstance(line, str)][:5]
 
-    result.pop("detected", None)
+    detected = result.pop("detected", False)
+    sector = result.pop("fire_sector", "none")
     result["id"] = str(int(datetime.now(timezone.utc).timestamp() * 1000))
     result["timestamp"] = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
-    return validate_alert(result)
+    alert = validate_alert(result)
+    # Kept alongside the glasses contract so the demo map can place the fire.
+    alert["fire_sector"] = sector if detected and sector in FIRE_SECTORS else "none"
+    return alert
