@@ -1,8 +1,8 @@
 """Publish random demo alerts to the FireSight API so the dashboard and glasses update live.
 
-    python scripts/demo_feed.py                      # local API on :8790
-    python scripts/demo_feed.py --url https://...    # another backend
-    INGEST_TOKEN=... python scripts/demo_feed.py     # backend with PUBLIC_DEPLOYMENT=true
+    python demos/demo_feed.py                      # local API on :8790
+    python demos/demo_feed.py --url https://...    # another backend
+    INGEST_TOKEN=... python demos/demo_feed.py     # backend with PUBLIC_DEPLOYMENT=true
 
 Each alert is re-sent every few seconds with a fresh timestamp (alerts expire quickly
 by design) and a new random alert is picked every --change seconds. Demo data only.

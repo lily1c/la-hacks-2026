@@ -1,9 +1,9 @@
 """Feed drone-like frames to the FireSight API so each one is analyzed and sent to the glasses.
 
-    python scripts/frame_feed.py                       # dummy frames made from wildfire.jpeg
-    python scripts/frame_feed.py --dir path/to/images  # your own JPEG/PNG frames
-    python scripts/frame_feed.py --url https://...     # another backend
-    INGEST_TOKEN=... python scripts/frame_feed.py      # backend with PUBLIC_DEPLOYMENT=true
+    python demos/frame_feed.py                       # dummy frames made from wildfire.jpeg
+    python demos/frame_feed.py --dir path/to/images  # your own JPEG/PNG frames
+    python demos/frame_feed.py --url https://...     # another backend
+    INGEST_TOKEN=... python demos/frame_feed.py      # backend with PUBLIC_DEPLOYMENT=true
 
 Frames are real images and go through the real detector (POST /frame); only the
 dummy frames themselves are synthetic crops/flips of one wildfire photo.

@@ -1,115 +1,52 @@
 # FireSight
 
-> **Try the whole pipeline yourself:** [DEMO.md](DEMO.md) walks through feeding frames to the API and seeing the analysis on G2 glasses or the simulator.
-
-FireSight accepts one JPEG or PNG frame per request. The drone pipeline can send a new frame once per second; when a Gemini API key is configured, each frame is analyzed by a Gemini vision language model and a compact alert is published for the glasses app. The local OpenCV detector remains available as a fallback. A batch video endpoint remains available for local clips and uses OpenCV.
-
-## Project layout
+FireSight receives paired drone JPEGs and telemetry from Beagle Eyes, analyzes frames, and serves a map dashboard and alerts to an Even Realities G2 phone app.
 
 ```text
-src/firesight/
-  alerts.py      alert contract and validation
-  api.py         upload and latest-alert HTTP routes
-  cli.py         command-line entry point
-  frame.py       JPEG/PNG decoding and single-frame analysis
-  gemini.py      Gemini multimodal image detection
-  detector.py    Gemini/OpenCV detector selection
-  video.py       OpenCV video sampling and JPEG extraction
-  vision.py      frame detection and grid ranking
-mock_server.js   lightweight glasses API mock
+Greg's computer: drone → Beagle Eyes → HTTPS image + telemetry
+                                           ↓
+Render: receiver → latest-frame analysis → alert JSON
+           ↓                                  ↓
+       dashboard                 Even Hub phone app → G2
+           ↑                                  ↓
+           └──────── SDK display report ──────┘
 ```
 
-## Install and run the API
+## Run locally
+
+Python 3.10+ is required. From the repository root:
 
 ```sh
 python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -e .
-uvicorn firesight.api:app --host 0.0.0.0 --port 8787
+. .venv/bin/activate
+pip install -e '.[test]'
+export INGEST_MODE=push
+export FIRESIGHT_DETECTOR=opencv
+export INGEST_TOKEN=replace-with-a-private-token
+export G2_REPORT_TOKEN=replace-with-a-separate-private-token
+uvicorn firesight.api:app --host 127.0.0.1 --port 8790
 ```
 
-To use Gemini vision for single-frame detection, create an API key in [Google AI Studio](https://aistudio.google.com/app/apikey) and set these variables in the same terminal before starting the API or CLI:
+Open http://127.0.0.1:8790. No incoming frames is a normal waiting state. Greg uses the hosted HTTPS endpoint, not your localhost.
 
-```sh
-export GEMINI_API_KEY='your-google-ai-studio-api-key'
-export FIRESIGHT_DETECTOR=gemini
-# Optional; defaults to gemini-3.8-flash
-export GEMINI_MODEL=gemini-3.8-flash
-```
+## Project structure
 
-`FIRESIGHT_DETECTOR=auto` (the default) uses Gemini when `GEMINI_API_KEY` is set, otherwise it uses local OpenCV. Set it to `opencv` to force local detection. Gemini analyzes each submitted frame and usage may incur API charges. The API key is read from the process environment and is never written to alert output or a project file.
+| Directory | Responsibility |
+| --- | --- |
+| `src/firesight/api.py` | HTTP entry point; stable routes |
+| `src/firesight/ingestion/` | Push receiver and optional legacy bundle readers |
+| `src/firesight/analysis/` | Image/video processing, OpenCV and Gemini |
+| `src/firesight/contracts/` | Shared alert validation |
+| `src/firesight/services/` | Optional demo image rendering |
+| `src/firesight/dashboard/` | HTML, CSS and JavaScript served by the API |
+| `glasses-app/` | Even Hub TypeScript client |
+| `integrations/beagle_push/` | Sender installed on Greg's computer |
+| `demos/` | Synthetic inputs, separate from live ingestion |
+| `deploy/` | Docker deployment |
+| `tests/` | Receiver and API regression tests |
+| `docs/` | Architecture, contracts, setup and verification |
 
-The API allows cross-origin requests and exposes:
-
-- `GET /latest` — `204 No Content` before an alert exists; otherwise `200 OK` with `Content-Type: application/json`.
-- `POST /frame` — analyze one JPEG or PNG picture using the selected detector, publish its alert, and return it. Send one request for each frame, once per second.
-- `POST /video` — upload a video as multipart field `video`; it analyzes frames, publishes the alert, and returns it.
-- `POST /latest` — publish a prepared alert, useful for connecting an upstream LLM or exercising the glasses UI.
-- `GET /health` — simple readiness check.
-
-Send frame bytes directly with the matching image content type:
-
-```sh
-curl -X POST http://localhost:8787/frame \
-  -H 'Content-Type: image/jpeg' \
-  --data-binary '@path/to/frame.jpg'
-
-curl -i http://localhost:8787/latest
-```
-
-For PNG, send `Content-Type: image/png` and the `.png` path. Multipart uploads also work using a `frame` file field. Each frame request replaces the latest alert in arrival order. The `/video` batch route samples one frame per second by default and returns an alert based on the strongest sampled OpenCV fire signal.
-
-## Glasses alert contract
-
-Responses use this shape:
-
-```json
-{
-  "id": "1792277038391",
-  "timestamp": "2026-10-17T22:42:10Z",
-  "priority": "critical",
-  "headline": "Fire detected - use caution",
-  "instructions": [
-    "Check upper-right frame sector",
-    "Check center frame sector"
-  ]
-}
-```
-
-The headline and each instruction are limited to 40 characters. There can be up to five instructions. Priorities are `critical`, `warning`, or `info`; unknown priorities submitted to `POST /latest` become `info`. CORS allows all origins for the glasses app.
-
-Image analysis cannot infer safe paths, real-world distances, crew locations, or compass directions from a single frame. The Gemini prompt restricts instructions to visible evidence and relative image positions; alerts are not evacuation guidance. Add trusted GPS, wind, terrain, and crew data before generating operational routing instructions.
-
-## Test the glasses API without video processing
-
-The Node mock implements `GET /latest` and `POST /latest` on port 8787:
-
-```sh
-npm run mock
-```
-
-In another terminal, publish a test alert:
-
-```sh
-curl -i -X POST http://localhost:8787/latest \
-  -H 'Content-Type: application/json' \
-  -d '{"priority":"critical","headline":"Test alert","instructions":["Check upper-right sector","Move 20m south"]}'
-
-curl -i http://localhost:8787/latest
-```
-
-## Run the analyzer directly
-
-The installed CLI accepts either a JPEG/PNG picture or a video and writes the alert JSON beside the input:
-
-```sh
-firesight-analyze path/to/frame.jpg --out alert.json
-firesight-analyze path/to/drone_video.mp4 --sample-seconds 0.5 --out alert.json
-```
-
-The root-level `wildfire_analyzer.py` remains as a compatibility launcher for existing commands.
-
-JPEG/PNG analysis uses Gemini Vision when configured, or a single-frame OpenCV color/brightness heuristic. Video analysis uses OpenCV. Neither detector is a verified fire assessment; video/container support depends on the codecs available in the local OpenCV build.
+Old Python module imports remain supported by compatibility modules. Greg's GPU software stays in his separate repository. The old VM deployment remains available in `vm-setup`; it is not required for this push deployment.
 
 ## Dashboard & Beagle Eyes Integration
 
@@ -122,9 +59,9 @@ The map-first FireSight dashboard (`src/firesight/dashboard/index.html`) integra
 Run the installer script to clone/update `vendor/beagle_eyes`, initialize the `Deep-Visual-Odometry-SLAM` submodule cleanly, and build DPVO CUDA extensions if a CUDA toolkit is present:
 
 ```sh
-./packages/install_beagle_eyes.sh
+./scripts/install_beagle_eyes.sh
 # Or skip CUDA extension compilation (e.g., when only running mock_sender.py):
-./packages/install_beagle_eyes.sh vendor/beagle_eyes --skip-build
+./scripts/install_beagle_eyes.sh vendor/beagle_eyes --skip-build
 ```
 
 ### 2. Run Beagle Eyes + FireSight Dashboard (Local End-to-End)
@@ -210,3 +147,16 @@ The Blueprint defaults to OpenCV and generates separate INGEST_TOKEN and G2_REPO
 The dashboard and read endpoints are public in this prototype. Only use demo imagery suitable for the project's public dashboard. Private incident deployment requires read authentication too.
 
 Leave BEAGLE_URL unset until Greg provides a reachable endpoint. Render cannot connect directly to 172.20.10.2 or another laptop's private LAN IP. Greg must provide an HTTPS tunnel/private network connection to his authenticated snapshot exporter; then configure BEAGLE_URL and BEAGLE_EXPORT_TOKEN in Render. Do not expose the export token in URLs. No GPU is required for the default OpenCV backend. Configuring Gemini requires a separate server-side API key and provider-supported model.
+
+## Setup and verification
+
+- [Greg's sender](integrations/beagle_push/README.md)
+- [Glasses setup](docs/glasses-setup.md)
+- [Architecture and branch decisions](docs/architecture.md)
+- [API contracts](docs/api-contracts.md)
+- [Testing](docs/testing.md)
+- [Demo instructions](docs/demos.md)
+
+Render uses `render.yaml`, targeting `main`. An existing manually configured Render service may still require its branch setting to be changed in the dashboard. Keep existing tokens unchanged when deploying.
+
+OpenCV is a color heuristic. Gemini is optional and requires an API key and a model available to your account via `GEMINI_MODEL`. This project does not currently implement Llama or ElevenLabs. Telemetry is relative odometry, not GPS. Generated demo maps are not geographic navigation. Phone GPS and voice-report backend support remain separate work.

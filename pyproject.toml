@@ -17,6 +17,9 @@ dependencies = [
   "google-genai>=1.0.0",
 ]
 
+[project.optional-dependencies]
+test = ["httpx", "build"]
+
 [project.scripts]
 firesight-analyze = "firesight.cli:main"
 
@@ -27,4 +30,4 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-firesight = ["dashboard/*.html"]
+firesight = ["dashboard/*.html", "dashboard/*.js", "dashboard/*.css"]

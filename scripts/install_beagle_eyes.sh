@@ -36,7 +36,10 @@ if [[ -d "${TARGET_DIR}/.git" ]]; then
     git -C "${TARGET_DIR}" pull --ff-only origin "${BRANCH}"
 else
     echo "[2/4] Cloning ${REPO_URL} (branch: ${BRANCH})..."
-    rm -rf "${TARGET_DIR}"
+    if [[ -e "${TARGET_DIR}" ]]; then
+        echo "Target exists and is not a Git checkout; choose an empty destination." >&2
+        exit 1
+    fi
     git clone --branch "${BRANCH}" "${REPO_URL}" "${TARGET_DIR}"
 fi
 

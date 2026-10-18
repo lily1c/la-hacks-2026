@@ -27,7 +27,7 @@ FIRE SPREADING AHEAD AND RIGHT        │ ▲          ████    │
 | **Frames** | Demo. Six variations (crops, mirror images, a black-and-white "smoke only" copy) of one real wildfire photo, so the fire lands in different parts of the frame. You can use your own images instead. |
 | **Analysis** | **Real.** Each frame goes through the detector: OpenCV fire-color detection by default, or Gemini if you add an API key. |
 | **Instructions** | **Real output of the analysis.** OpenCV can only say *where* fire is ("Check upper-left frame sector"). Gemini mode writes action instructions using the image plus a scenario file. |
-| **Field data** for Gemini (wind, escape route, safe zone, crews) | Demo. Invented in [`demo_scenario.json`](demo_scenario.json). In a real deployment this would come from GPS, weather and command. |
+| **Field data** for Gemini (wind, escape route, safe zone, crews) | Demo. Invented in [`demos/scenario.json`](demos/scenario.json). In a real deployment this would come from GPS, weather and command. |
 | **Map** | Demo placeholder. The wearer (◎), escape route and safe zone (□) are drawn, not measured. **The fire is placed in the part of the frame the analysis reported**, so the map matches the instructions. |
 
 Nothing in this demo is real evacuation guidance.
@@ -85,7 +85,7 @@ Wait for `Uvicorn running on http://127.0.0.1:8790`.
 
 **Terminal 2: frame feeder**
 ```sh
-.venv/bin/python scripts/frame_feed.py
+.venv/bin/python demos/frame_feed.py
 ```
 Every 6 seconds you'll see the analysis of the next frame:
 ```
@@ -153,7 +153,7 @@ This creates `glasses-app/firesight.ehpk`.
 
 ## 4. Optional: AI-written instructions with Gemini
 
-OpenCV only reports *where* fire is. Gemini looks at the image, combines it with the field data in [`demo_scenario.json`](demo_scenario.json) and writes instructions a firefighter could act on:
+OpenCV only reports *where* fire is. Gemini looks at the image, combines it with the field data in [`demos/scenario.json`](demos/scenario.json) and writes instructions a firefighter could act on:
 
 ```
 [critical] Fire spreading ahead and right | Move down-right toward creek trail; Do NOT go back - spot fire behind; Reach creek safe zone 300m down-right
@@ -164,12 +164,12 @@ OpenCV only reports *where* fire is. Gemini looks at the image, combines it with
 export GEMINI_API_KEY='your-key-here'
 ```
 ```sh
-FIRESIGHT_DEMO_MAP=true FIRESIGHT_DETECTOR=gemini FIRESIGHT_SCENARIO=demo_scenario.json FIRESIGHT_GEMINI_FALLBACK=opencv .venv/bin/uvicorn firesight.api:app --port 8790
+FIRESIGHT_DEMO_MAP=true FIRESIGHT_DETECTOR=gemini FIRESIGHT_SCENARIO=demos/scenario.json FIRESIGHT_GEMINI_FALLBACK=opencv .venv/bin/uvicorn firesight.api:app --port 8790
 ```
 
 **Terminal 2:** restart the feeder with a longer interval:
 ```sh
-.venv/bin/python scripts/frame_feed.py --interval 10
+.venv/bin/python demos/frame_feed.py --interval 10
 ```
 
 There's no need to rebuild or upload the glasses app. It just reads whatever the backend publishes.
@@ -177,14 +177,14 @@ There's no need to rebuild or upload the glasses app. It just reads whatever the
 **Things to know:**
 - **Quota.** Gemini's free plan allows only about **20 requests per day** for this model. The backend **analyzes each image only once** and reuses the result when the same image comes round again, so the 6-frame loop costs 6 requests. That cache is cleared when the backend restarts. For a presentation, start the backend shortly beforehand.
 - **Fallback.** With `FIRESIGHT_GEMINI_FALLBACK=opencv`, a frame Gemini can't analyze (e.g. quota used up) is analyzed with OpenCV instead, so the glasses never go blank. Those frames show the simpler "Check … frame sector" text.
-- **Your own story.** Edit `demo_scenario.json` to change the wind, route, safe zone, hazards or crews, then restart the backend. Gemini is told to use **only** distances and routes from this file, never invented ones.
+- **Your own story.** Edit `demos/scenario.json` to change the wind, route, safe zone, hazards or crews, then restart the backend. Gemini is told to use **only** distances and routes from this file, never invented ones.
 - **Keep the key out of the repo.** Use `export` in your terminal as shown. Don't put it in any file in the repo or paste it into chats. If you do, delete it in AI Studio and create a new one.
 
 ## 5. Optional: use your own images
 
 Put JPEG or PNG frames in a folder and point the feeder at it:
 ```sh
-.venv/bin/python scripts/frame_feed.py --dir ~/path/to/frames --interval 10
+.venv/bin/python demos/frame_feed.py --dir ~/path/to/frames --interval 10
 ```
 Frames are sent in filename order and loop forever.
 
@@ -198,12 +198,12 @@ Frames are sent in filename order and loop forever.
 |---|---|
 | `FIRESIGHT_DETECTOR` | `opencv` (local, free), `gemini` (needs `GEMINI_API_KEY`) or `auto` (Gemini if a key is set) |
 | `FIRESIGHT_DEMO_MAP=true` | Adds the placeholder map: `map_url` in `/latest`, image at `/view.png`. Off by default. |
-| `FIRESIGHT_SCENARIO=demo_scenario.json` | Gemini only: use the field-data file and write actionable instructions. Without it, Gemini only describes where fire is visible. |
+| `FIRESIGHT_SCENARIO=demos/scenario.json` | Gemini only: use the field-data file and write actionable instructions. Without it, Gemini only describes where fire is visible. |
 | `FIRESIGHT_GEMINI_FALLBACK=opencv` | Gemini only: fall back to OpenCV for a frame when Gemini fails |
 | `GEMINI_API_KEY` | Your Gemini key |
 | `GEMINI_MODEL` | Optional model override |
 
-### Frame feeder options (`scripts/frame_feed.py`)
+### Frame feeder options (`demos/frame_feed.py`)
 
 | Option | Default | Effect |
 |---|---|---|
@@ -256,10 +256,10 @@ The alert JSON format is documented in [`glasses-app/SUMMARY_FORMAT.md`](glasses
 
 | File | What it does |
 |---|---|
-| [`scripts/frame_feed.py`](scripts/frame_feed.py) | Sends dummy (or your own) frames to `POST /frame` on a loop and prints each analysis |
+| [`demos/frame_feed.py`](demos/frame_feed.py) | Sends dummy (or your own) frames to `POST /frame` on a loop and prints each analysis |
 | [`src/firesight/mapview.py`](src/firesight/mapview.py) | Draws the placeholder 288×144 map, with the fire placed in the reported part of the frame |
-| [`demo_scenario.json`](demo_scenario.json) | Invented field data used by the Gemini prompt |
-| [`scripts/demo_feed.py`](scripts/demo_feed.py) | Alternative feeder that publishes random pre-written alerts, with no image analysis |
+| [`demos/scenario.json`](demos/scenario.json) | Invented field data used by the Gemini prompt |
+| [`demos/demo_feed.py`](demos/demo_feed.py) | Alternative feeder that publishes random pre-written alerts, with no image analysis |
 | Changes in [`src/firesight/api.py`](src/firesight/api.py) | `FIRESIGHT_DEMO_MAP`: adds `map_url` and serves `/view.png` |
 | Changes in [`src/firesight/gemini.py`](src/firesight/gemini.py) | Scenario prompt, `fire_sector`, per-image result cache, fix for a schema field Gemini rejected |
 | Changes in [`src/firesight/frame.py`](src/firesight/frame.py) | Optional OpenCV fallback when Gemini fails |

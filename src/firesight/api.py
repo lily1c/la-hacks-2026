@@ -24,6 +24,7 @@ try:
     from fastapi import FastAPI, File, HTTPException, Request, UploadFile
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.responses import FileResponse, JSONResponse, Response
+    from fastapi.staticfiles import StaticFiles
     _HAS_FASTAPI = True
 except ModuleNotFoundError:
     _HAS_FASTAPI = False
@@ -91,6 +92,7 @@ if _HAS_FASTAPI:
                 await task
 
     app = FastAPI(title="FireSight API", version="1.0.0", lifespan=lifespan)
+    app.mount("/assets", StaticFiles(directory=Path(__file__).parent / "dashboard"), name="assets")
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],

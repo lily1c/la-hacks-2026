@@ -13,7 +13,7 @@ FIRE EXPANDING FURTHER AHEAD
 
 Built by [@Dakshaarvind](https://github.com/Dakshaarvind).
 
-**To run the full demo (frames → analysis → glasses), follow [DEMO.md](../DEMO.md).**
+**To run the full demo (frames → analysis → glasses), follow [DEMO.md](../docs/demos.md).**
 
 ## How it fits into FireSight
 
