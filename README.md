@@ -1,6 +1,6 @@
 # FireSight
 
-FireSight takes a drone video, samples frames with OpenCV, encodes each sampled frame as JPEG, detects fire-colored regions, and publishes a compact alert for the glasses app.
+FireSight accepts one JPEG or PNG frame per request. The drone pipeline can send a new frame once per second; OpenCV analyzes each picture and publishes a compact alert for the glasses app. A batch video endpoint remains available for local clips.
 
 ## Project layout
 
@@ -9,6 +9,7 @@ src/firesight/
   alerts.py      alert contract and validation
   api.py         upload and latest-alert HTTP routes
   cli.py         command-line entry point
+  frame.py       JPEG/PNG decoding and single-frame analysis
   video.py       OpenCV video sampling and JPEG extraction
   vision.py      frame detection and grid ranking
 mock_server.js   lightweight glasses API mock
@@ -26,21 +27,22 @@ uvicorn firesight.api:app --host 0.0.0.0 --port 8787
 The API allows cross-origin requests and exposes:
 
 - `GET /latest` — `204 No Content` before an alert exists; otherwise `200 OK` with `Content-Type: application/json`.
+- `POST /frame` — analyze one JPEG or PNG picture, publish its alert, and return it. Send one request for each frame, once per second.
 - `POST /video` — upload a video as multipart field `video`; it analyzes frames, publishes the alert, and returns it.
 - `POST /latest` — publish a prepared alert, useful for connecting an upstream LLM or exercising the glasses UI.
 - `GET /health` — simple readiness check.
 
-Example upload and poll:
+Send frame bytes directly with the matching image content type:
 
 ```sh
-curl -X POST 'http://localhost:8787/video?sample_seconds=1' \
-  -F 'video=@path/to/drone_video.mp4' \
-  -H 'Origin: https://glasses-app.example'
+curl -X POST http://localhost:8787/frame \
+  -H 'Content-Type: image/jpeg' \
+  --data-binary '@path/to/frame.jpg'
 
 curl -i http://localhost:8787/latest
 ```
 
-The video route samples one frame per second by default. It returns one alert based on the sampled frame with the strongest detected fire signal. The uploaded temporary video is deleted after analysis.
+For PNG, send `Content-Type: image/png` and the `.png` path. Multipart uploads also work using a `frame` file field. Each frame request replaces the latest alert in arrival order. The `/video` batch route samples one frame per second by default and returns an alert based on the strongest sampled fire signal.
 
 ## Glasses alert contract
 
@@ -83,9 +85,10 @@ curl -i http://localhost:8787/latest
 
 ## Run the analyzer directly
 
-The installed CLI writes the same alert JSON next to the video:
+The installed CLI accepts either a JPEG/PNG picture or a video and writes the alert JSON beside the input:
 
 ```sh
+firesight-analyze path/to/frame.jpg --out alert.json
 firesight-analyze path/to/drone_video.mp4 --sample-seconds 0.5 --out alert.json
 ```
 

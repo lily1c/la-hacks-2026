@@ -5,11 +5,12 @@ import tempfile
 from pathlib import Path
 
 import cv2
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 
 from firesight.alerts import validate_alert
+from firesight.frame import SUPPORTED_IMAGE_TYPES, analyze_frame
 from firesight.video import analyze_video
 
 app = FastAPI(title="FireSight API", version="1.0.0")
@@ -23,6 +24,7 @@ app.add_middleware(
 
 latest_alert = None
 alert_lock = asyncio.Lock()
+frame_lock = asyncio.Lock()
 
 
 @app.get("/health")
@@ -71,4 +73,44 @@ async def upload_video(video: UploadFile = File(...), sample_seconds: float = 1.
             os.unlink(temp_path)
     async with alert_lock:
         latest_alert = alert
+    return JSONResponse(content=alert)
+
+
+@app.post("/frame")
+async def upload_frame(request: Request):
+    """Analyze one JPEG/PNG frame; the drone client calls this once per second."""
+    global latest_alert
+    content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    if content_type == "multipart/form-data":
+        try:
+            form = await request.form()
+        except Exception as error:
+            raise HTTPException(status_code=400, detail="Could not read multipart frame upload") from error
+        upload = form.get("frame") or form.get("image")
+        if upload is None or not hasattr(upload, "read"):
+            raise HTTPException(status_code=422, detail="Multipart upload must include a 'frame' file")
+        image_bytes = await upload.read()
+        image_type = (getattr(upload, "content_type", None) or "").split(";", 1)[0].strip().lower()
+        if image_type not in SUPPORTED_IMAGE_TYPES:
+            filename = (getattr(upload, "filename", "") or "").lower()
+            if filename.endswith(".png"):
+                image_type = "image/png"
+            elif filename.endswith((".jpg", ".jpeg")):
+                image_type = "image/jpeg"
+    else:
+        image_type = content_type
+        image_bytes = await request.body()
+
+    if image_type == "image/jpg":
+        image_type = "image/jpeg"
+    if image_type not in SUPPORTED_IMAGE_TYPES:
+        raise HTTPException(status_code=415, detail="Content-Type must be image/jpeg or image/png")
+    try:
+        # Preserve frame order when analysis takes longer than the send interval.
+        async with frame_lock:
+            alert = await asyncio.to_thread(analyze_frame, image_bytes, image_type)
+            async with alert_lock:
+                latest_alert = alert
+    except (ValueError, cv2.error) as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
     return JSONResponse(content=alert)
