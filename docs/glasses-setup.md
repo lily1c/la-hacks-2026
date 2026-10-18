@@ -1,7 +1,9 @@
 # G2 setup
 
-In glasses-app, run `npm ci`. Use `npm run use-backend -- https://firesight-dashboard.onrender.com` to set the backend and manifest network whitelist (see the client README for script options). Configure VITE_G2_REPORT_TOKEN to match the backend G2_REPORT_TOKEN privately, then `npm run build`. Configure voice reports off: the /report backend is not implemented.
+Installing and running the glasses app (simulator, real G2 with the hosted backend, or your own backend), including the accounts, keys and tokens a tester needs, is in [glasses-app/README.md → Install and run on G2](../glasses-app/README.md#install-and-run-on-g2).
 
-The phone polls /latest and reports /g2/display. Check /g2/status while testing on physical glasses. Keep tokens out of commits and logs. SDK acceptance is not a screenshot of the physical display.
-
-Demo maps are optional; enable FIRESIGHT_DEMO_MAP only for an explicitly simulated demonstration. The image is labelled DEMO - NOT NAVIGATION. The glasses report the phone's GPS, IMU, button presses and device status to `POST /wearer` every 5 s (needs `VITE_G2_REPORT_TOKEN`). See [api-contracts.md](api-contracts.md).
+Notes for operators:
+- `G2_REPORT_TOKEN` (backend) must equal `VITE_G2_REPORT_TOKEN` (glasses build). It authorizes `POST /g2/display` and `POST /wearer`. Never put model API keys or `INGEST_TOKEN` in the glasses build.
+- Drone-frame alerts reach the glasses only with `G2_DELIVERY_ENABLED=true`.
+- Check `/g2/status` and `/wearer` while testing on physical glasses. SDK acceptance is not a screenshot of the physical display.
+- Demo maps (`FIRESIGHT_DEMO_MAP`) and the demo fire (`FIRESIGHT_DEMO_HAZARD`) are for explicitly simulated demonstrations only. API details are in [api-contracts.md](api-contracts.md).

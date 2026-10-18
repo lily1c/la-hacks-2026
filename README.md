@@ -138,7 +138,7 @@ Latency: frames are downscaled to 768 px, thinking is minimal, and calls run off
 
 ## G2 glasses: what works
 
-The glasses app is in [`glasses-app/`](glasses-app/README.md). Tested on real G2 glasses:
+The glasses app is in [`glasses-app/`](glasses-app/README.md). **To install and run it on G2 (or the simulator), including the accounts, keys and tokens a tester needs, see [Install and run on G2](glasses-app/README.md#install-and-run-on-g2).** Tested on real G2 glasses:
 
 - **Alerts:** the latest drone-frame alert (priority, headline, instructions), refreshed every 2 s. Alerts older than 15 s are cleared; `NO SIGNAL` shows when the backend is unreachable.
 - **Wearer GPS:** the phone's GPS goes to `POST /wearer` every 5 s. The reply lists the nearest mapped hazards (Gemini annotations placed by `gps_tf`), and the glasses show e.g. `>> Fire front: ~180 m NE`.
