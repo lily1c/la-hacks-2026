@@ -1,6 +1,6 @@
 {
-  "package_id": "com.daksha.myfirstapp",
-  "name": "My First App",
+  "package_id": "com.dakshaarvind.firesight",
+  "name": "FireSight",
   "version": "0.1.0",
   "edition": "202601",
   "min_sdk_version": "0.0.16",

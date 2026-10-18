@@ -49,6 +49,7 @@ The only link between the pipeline and the glasses is the JSON format in [SUMMAR
 | [SUMMARY_FORMAT.md](SUMMARY_FORMAT.md) | The JSON contract for the backend team |
 | [mock-server.mjs](mock-server.mjs) | Fake backend for testing without the drone pipeline |
 | [app.json](app.json) | Even Hub manifest, including the network permission whitelist |
+| [scripts/use-backend.mjs](scripts/use-backend.mjs) | Points the app at a backend URL (env + whitelist) |
 
 Stack: TypeScript, Vite, [Even Hub SDK](https://www.npmjs.com/package/@evenrealities/even_hub_sdk) 0.0.16.
 
@@ -90,11 +91,16 @@ evenhub qr --url "http://$(ipconfig getifaddr en0):5173"
 
 Scan the QR code from the Even app with Developer Mode on. The phone and the computer must be on the same network.
 
-### Connect to the real backend
+### Point at a backend and package for Even Hub
 
-1. Create `glasses-app/.env.local` containing `VITE_SUMMARY_URL=https://<backend>/latest`.
-2. Add the backend's origin to the `network` permission `whitelist` in [app.json](app.json).
-3. The backend must send `Access-Control-Allow-Origin: *` (see [SUMMARY_FORMAT.md](SUMMARY_FORMAT.md)).
+```sh
+npm run use-backend -- https://<backend>   # sets .env.local and the app.json whitelist
+npm run pack                               # builds and writes firesight.ehpk
+```
+
+Upload `firesight.ehpk` through the Even Hub developer portal. To go back to the local mock, run `npm run use-backend -- http://localhost:8787`.
+
+The backend must send `Access-Control-Allow-Origin: *` (see [SUMMARY_FORMAT.md](SUMMARY_FORMAT.md)). No API keys belong in this app; anything bundled into the `.ehpk` can be extracted.
 
 ## Next steps
 
