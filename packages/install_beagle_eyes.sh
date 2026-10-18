@@ -6,7 +6,7 @@
 # ==============================================================================
 set -euo pipefail
 
-PARENT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PARENT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET_DIR="${1:-${PARENT_ROOT}/vendor/beagle_eyes}"
 REPO_URL="https://github.com/sangregoriokimpo/beagle_eyes.git"
 BRANCH="main"
