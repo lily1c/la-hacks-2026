@@ -18,6 +18,7 @@ from firesight.frame import SUPPORTED_IMAGE_TYPES, analyze_frame
 from firesight.gemini import GeminiConfigurationError, GeminiRequestError
 from firesight.live import BundleWatcher, RemoteBeagleWatcher, timestamp
 from firesight.push import PushReceiver
+from firesight.services.annotations import AnnotationService
 from firesight.video import analyze_video
 
 try:
@@ -83,13 +84,16 @@ if _HAS_FASTAPI:
     @asynccontextmanager
     async def lifespan(app):
         app.state.watcher = _create_watcher()
-        task = asyncio.create_task(app.state.watcher.run())
+        app.state.annotations = AnnotationService(lambda: getattr(app.state.watcher, "snapshot", None))
+        tasks = [asyncio.create_task(app.state.watcher.run()), asyncio.create_task(app.state.annotations.run())]
         try:
             yield
         finally:
-            task.cancel()
-            with suppress(asyncio.CancelledError):
-                await task
+            for task in tasks:
+                task.cancel()
+            for task in tasks:
+                with suppress(asyncio.CancelledError):
+                    await task
 
     app = FastAPI(title="FireSight API", version="1.0.0", lifespan=lifespan)
     app.mount("/assets", StaticFiles(directory=Path(__file__).parent / "dashboard"), name="assets")
@@ -103,7 +107,7 @@ if _HAS_FASTAPI:
 
     @app.middleware("http")
     async def protect_public_writes(request: Request, call_next):
-        if os.getenv("PUBLIC_DEPLOYMENT") == "true" and request.method == "POST" and request.url.path in ("/frame", "/video", "/latest", "/ingest/beagle"):
+        if os.getenv("PUBLIC_DEPLOYMENT") == "true" and request.method == "POST" and request.url.path in ("/frame", "/video", "/latest", "/ingest/beagle", "/annotations/config", "/annotations/run"):
             token = os.getenv("INGEST_TOKEN", "")
             if not token or not hmac.compare_digest(request.headers.get("Authorization", ""), "Bearer " + token):
                 return JSONResponse({"detail": "A valid ingest token is required"}, status_code=401)
@@ -128,6 +132,26 @@ if _HAS_FASTAPI:
     @app.get("/live")
     async def live_status():
         return JSONResponse(app.state.watcher.status(), headers={"Cache-Control": "no-store"})
+
+    @app.get("/annotations")
+    async def get_annotations():
+        return JSONResponse(app.state.annotations.state(), headers={"Cache-Control": "no-store"})
+
+    @app.post("/annotations/config")
+    async def configure_annotations(payload: dict):
+        try:
+            return JSONResponse(app.state.annotations.configure(
+                payload.get("prompt"), payload.get("auto"), payload.get("interval_s")))
+        except (TypeError, ValueError) as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.post("/annotations/run")
+    async def run_annotations():
+        return JSONResponse(await app.state.annotations.run_once())
+
+    @app.delete("/annotations")
+    async def clear_annotations():
+        return JSONResponse(app.state.annotations.clear())
 
     @app.get("/latest")
     async def get_latest():

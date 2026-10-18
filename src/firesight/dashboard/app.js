@@ -225,3 +225,75 @@ if(!wsConnected){
   }
 }
 const confirmed=g2.fresh&&g2.report?.status==='sdk_accepted';$('g2State').textContent=confirmed?'SDK accepted':'Unconfirmed';$('reportAge').textContent=confirmed?'Fresh report':'Unconfirmed';$('g2Text').textContent=g2.fresh&&g2.report?g2.report.rendered_text||'Display cleared':alertObj?`[Outgoing Alert — ${alertObj.priority.toUpperCase()}]\n${alertObj.headline}\n${(alertObj.instructions||[]).join('\n')}\n\n(Waiting for G2 phone SDK ack)`:'No fresh display report.\n\nWaiting for the phone app.';$('links').innerHTML=`Beagle WS: <b>${wsConnected?'LIVE ('+beagleHost+')':'reconnecting ('+beagleHost+')'}</b><br>FireSight AI: ${fresh?'analyzing ('+(live.processed||0)+' frames)':live.state||'waiting'} · G2: ${confirmed?'SDK accepted':'unconfirmed'}`;}catch{$('apiStatus').textContent=wsConnected?'Beagle WS live (API offline)':'Backend unavailable';if(!wsConnected){$('camera').hidden=true;$('cameraEmpty').hidden=false;$('cameraState').textContent='Offline';$('position').textContent='— / — / —';$('frameAge').textContent='Unavailable';}$('g2Text').textContent='Backend unavailable. Display state unconfirmed.';$('g2State').textContent='Unconfirmed';$('reportAge').textContent='Unconfirmed';$('links').innerHTML=`Beagle WS: <b>${wsConnected?'LIVE ('+beagleHost+')':'offline'}</b><br>Backend API: unavailable`;}setTimeout(poll,2000);}poll();
+
+// ---- Gemini annotations: operator prompt -> map overlays (served by /annotations) ----
+const ANN_COLORS={critical:'#d93025',warning:'#f08a24',info:'#2b7de9'};
+const ANN_PRESETS=[['Car crash','Car crashes or collisions, and the road area they affect'],['Fire & smoke','Visible flames or smoke and the area they cover'],['Blocked road','Roads blocked by vehicles, debris or crowds'],['Vehicles','Every car, truck and bus'],['Trees','Trees and dense vegetation'],['People','People who appear to be in danger or injured']];
+let annData=null,annHidden=new Set(),annDirty=false,annLayersReady=false;
+const annColorExpr=['match',['get','severity'],'critical',ANN_COLORS.critical,'warning',ANN_COLORS.warning,ANN_COLORS.info];
+function annSetup(){
+  const presets=$('annPresets');
+  for(const [name,text] of ANN_PRESETS){const b=document.createElement('button');b.type='button';b.textContent=name;b.onclick=()=>{$('annPrompt').value=text;annPush({prompt:text});};presets.append(b);}
+  $('annPrompt').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();annRun();}});
+  $('annRun').onclick=annRun;
+  $('annAuto').onchange=()=>annPush({prompt:$('annPrompt').value,auto:$('annAuto').checked,interval_s:Number($('annInterval').value)});
+  $('annInterval').onchange=()=>annPush({interval_s:Number($('annInterval').value)});
+  $('annClear').onclick=async()=>{try{annData=await (await fetch(apiBase+'/annotations',{method:'DELETE'})).json();annRender();}catch{}};
+}
+async function annPush(body){try{const r=await fetch(apiBase+'/annotations/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});if(r.ok){annData=await r.json();annRender();}}catch{}}
+async function annRun(){
+  $('annRun').disabled=true;$('annState').textContent='Running';
+  try{await annPush({prompt:$('annPrompt').value,auto:$('annAuto').checked,interval_s:Number($('annInterval').value)});const r=await fetch(apiBase+'/annotations/run',{method:'POST'});annData=await r.json();annRender();}
+  catch{$('annStatus').textContent='Annotation service unavailable (needs the FastAPI backend).';$('annStatus').classList.add('err');}
+  finally{$('annRun').disabled=false;}
+}
+function annEnsureLayers(){
+  if(annLayersReady||!map||!map.isStyleLoaded())return annLayersReady;
+  const empty={type:'FeatureCollection',features:[]};
+  map.addSource('ann-areas',{type:'geojson',data:empty});map.addSource('ann-points',{type:'geojson',data:empty});
+  map.addLayer({id:'ann-fill',source:'ann-areas',type:'fill',paint:{'fill-color':annColorExpr,'fill-opacity':.28}});
+  map.addLayer({id:'ann-line',source:'ann-areas',type:'line',paint:{'line-color':annColorExpr,'line-width':2.5}});
+  map.addLayer({id:'ann-pt',source:'ann-points',type:'circle',paint:{'circle-radius':8,'circle-color':annColorExpr,'circle-stroke-color':'#fff','circle-stroke-width':2}});
+  for(const layer of ['ann-fill','ann-pt'])map.on('click',layer,e=>{const p=e.features[0].properties;new glMod.Popup().setLngLat(e.lngLat).setText(`${p.label}${p.summary?' — '+p.summary:''}`).addTo(map);});
+  return annLayersReady=true;
+}
+function annVisible(){return (annData?.annotations||[]).filter(a=>a.geometry&&!annHidden.has(a.kind));}
+function annDraw(){
+  if(!annEnsureLayers())return;
+  const areas=[],points=[];
+  for(const a of annVisible()){
+    const props={id:a.id,label:a.label,summary:a.summary,severity:a.severity,kind:a.kind};
+    const ring=a.geometry.latlon.map(([lat,lon])=>[lon,lat]);
+    if(a.geometry.type==='Polygon')areas.push({type:'Feature',properties:props,geometry:{type:'Polygon',coordinates:[[...ring,ring[0]]]}});
+    else points.push({type:'Feature',properties:props,geometry:{type:'Point',coordinates:ring[0]}});
+  }
+  map.getSource('ann-areas').setData({type:'FeatureCollection',features:areas});
+  map.getSource('ann-points').setData({type:'FeatureCollection',features:points});
+}
+function annRender(){
+  if(!annData)return;
+  const d=annData,list=d.annotations||[];
+  $('annState').textContent=d.busy?'Running':d.auto?'Auto':'Idle';
+  $('annState').classList.toggle('live',d.busy||d.auto);
+  if(document.activeElement!==$('annPrompt')&&$('annPrompt').value!==d.prompt)$('annPrompt').value=d.prompt;
+  $('annAuto').checked=d.auto;
+  const status=$('annStatus');status.classList.toggle('err',!!d.error);
+  status.textContent=d.error?d.error:d.runs?`${list.length} annotation${list.length===1?'':'s'} · ${d.latency_ms} ms · ${d.model}${list.some(a=>a.approx)?' · approximate (unscaled)':''}`:'Type an instruction, then press Annotate now.';
+  const kinds=[...new Set(list.map(a=>a.kind))];
+  const layers=$('annLayers');
+  if(layers.dataset.kinds!==kinds.join()){
+    layers.dataset.kinds=kinds.join();layers.replaceChildren();
+    for(const k of kinds){const l=document.createElement('label'),c=document.createElement('input');c.type='checkbox';c.checked=!annHidden.has(k);c.onchange=()=>{c.checked?annHidden.delete(k):annHidden.add(k);annDraw();annRender();};l.append(c,k.replace('_',' '));layers.append(l);}
+  }
+  $('annList').replaceChildren(...list.map(a=>{
+    const li=document.createElement('li'),dot=document.createElement('span'),text=document.createElement('div');
+    dot.className='dot';dot.style.background=ANN_COLORS[a.severity]||ANN_COLORS.info;
+    text.textContent=a.label;const sub=document.createElement('small');
+    sub.textContent=a.geometry?`${a.kind.replace('_',' ')}${a.range_m!=null?` · ${a.range_m} m`:''}${a.clamped?' · edge of view':''}${a.summary?' · '+a.summary:''}`:`${a.kind.replace('_',' ')} · not placed (needs --gps-tf)`;
+    text.append(sub);li.append(dot,text);
+    li.onclick=()=>{if(!a.geometry||!map)return;const [lat,lon]=a.geometry.latlon[0];map.flyTo({center:[lon,lat],zoom:19});};
+    return li;}));
+  annDraw();
+}
+async function annPoll(){try{const r=await fetch(apiBase+'/annotations',{cache:'no-store',signal:AbortSignal.timeout(4000)});if(r.ok){annData=await r.json();annRender();}else if(r.status===404){$('annStatus').textContent='Annotations need the FastAPI backend (pip install -e .).';}}catch{}setTimeout(annPoll,1500);}
+annSetup();annPoll();
