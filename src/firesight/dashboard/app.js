@@ -243,7 +243,7 @@ function annSetup(){
 async function annPush(body){try{const r=await fetch(apiBase+'/annotations/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});if(r.ok){annData=await r.json();annRender();}}catch{}}
 async function annRun(){
   $('annRun').disabled=true;$('annState').textContent='Running';
-  try{await annPush({prompt:$('annPrompt').value,auto:$('annAuto').checked,interval_s:Number($('annInterval').value)});const r=await fetch(apiBase+'/annotations/run',{method:'POST'});annData=await r.json();annRender();}
+  try{await annPush({prompt:$('annPrompt').value,auto:$('annAuto').checked,interval_s:Number($('annInterval').value)});const r=await fetch(apiBase+'/annotations/run',{method:'POST'});annData=await r.json();annRender();annFit();}
   catch{$('annStatus').textContent='Annotation service unavailable (needs the FastAPI backend).';$('annStatus').classList.add('err');}
   finally{$('annRun').disabled=false;}
 }
@@ -270,6 +270,12 @@ function annDraw(){
   map.getSource('ann-areas').setData({type:'FeatureCollection',features:areas});
   map.getSource('ann-points').setData({type:'FeatureCollection',features:points});
 }
+function annFit(){
+  const pts=annVisible().flatMap(a=>a.geometry.latlon.map(([lat,lon])=>[lon,lat]));
+  if(!pts.length||!map)return;
+  const lons=pts.map(p=>p[0]),lats=pts.map(p=>p[1]);
+  map.fitBounds([[Math.min(...lons),Math.min(...lats)],[Math.max(...lons),Math.max(...lats)]],{padding:120,maxZoom:19,duration:600});
+}
 function annRender(){
   if(!annData)return;
   const d=annData,list=d.annotations||[];
@@ -278,7 +284,8 @@ function annRender(){
   if(document.activeElement!==$('annPrompt')&&$('annPrompt').value!==d.prompt)$('annPrompt').value=d.prompt;
   $('annAuto').checked=d.auto;
   const status=$('annStatus');status.classList.toggle('err',!!d.error);
-  status.textContent=d.error?d.error:d.runs?`${list.length} annotation${list.length===1?'':'s'} · ${d.latency_ms} ms · ${d.model}${list.some(a=>a.approx)?' · approximate (unscaled)':''}`:'Type an instruction, then press Annotate now.';
+  const placed=list.filter(a=>a.geometry),edge=placed.filter(a=>a.clamped).length;
+  status.textContent=d.error?d.error:d.runs?`${list.length} annotation${list.length===1?'':'s'} (${placed.length} on map${edge?`, ${edge} at edge of view`:''}) · ${d.latency_ms} ms · ${d.model}${list.some(a=>a.approx)?' · approximate (unscaled)':''}`:'Type an instruction, then press Annotate now.';
   const kinds=[...new Set(list.map(a=>a.kind))];
   const layers=$('annLayers');
   if(layers.dataset.kinds!==kinds.join()){
