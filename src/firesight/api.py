@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse, Response
 
 from firesight.alerts import validate_alert
 from firesight.frame import SUPPORTED_IMAGE_TYPES, analyze_frame
+from firesight.snowflake import SnowflakeConfigurationError, SnowflakeRequestError
 from firesight.video import analyze_video
 
 app = FastAPI(title="FireSight API", version="1.0.0")
@@ -111,6 +112,10 @@ async def upload_frame(request: Request):
             alert = await asyncio.to_thread(analyze_frame, image_bytes, image_type)
             async with alert_lock:
                 latest_alert = alert
+    except SnowflakeConfigurationError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except SnowflakeRequestError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
     except (ValueError, cv2.error) as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     return JSONResponse(content=alert)
