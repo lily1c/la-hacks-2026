@@ -4,3 +4,6 @@
 __pycache__/
 *.py[cod]
 *.egg-info/
+
+# Beagle Eyes (managed by install_beagle_eyes.sh)
+vendor/beagle_eyes/

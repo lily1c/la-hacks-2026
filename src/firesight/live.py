@@ -95,55 +95,150 @@ class BundleWatcher:
 
 
 class RemoteBeagleWatcher(BundleWatcher):
-    """Poll Greg's running exporter, retaining newest-only inference semantics."""
+    """Poll Greg's running Beagle Eyes broadcaster or exporter, retaining newest-only inference semantics."""
     def __init__(self, url, token, *args):
         super().__init__(None, *args)
         from urllib.parse import urlsplit
         parsed = urlsplit(url)
-        if parsed.scheme not in ('http','https') or not parsed.hostname or parsed.username or parsed.password:
+        if parsed.scheme not in ('http', 'https') or not parsed.hostname or parsed.username or parsed.password:
             raise ValueError('BEAGLE_URL must be an HTTP(S) snapshot endpoint')
-        self.url, self.token = url, token
+        path = parsed.path if parsed.path and parsed.path != '/' else '/snapshot'
+        self.base_url = f"{parsed.scheme}://{parsed.netloc}"
+        self.ws_url = f"{'wss' if parsed.scheme == 'https' else 'ws'}://{parsed.netloc}/ws"
+        self.video_url = f"{self.base_url}/video.mjpg"
+        self.host = parsed.netloc
+        self.url = f"{self.base_url}{path}" + (f"?{parsed.query}" if parsed.query else "")
+        self.token = token
         self.state = 'connecting_to_beagle'
         self.last_frame = None
+        self.sequence = {}
+        self.pending = None
+
+    def accept(self, data):
+        """Also accept pushed Beagle bundles directly if posted to /ingest/beagle."""
+        session = str(uuid.UUID(data['session_id']))
+        telemetry = data['telemetry']
+        number = telemetry['frame_id']
+        if type(number) is not int or number < 0:
+            raise ValueError('telemetry.frame_id must be a nonnegative integer')
+        observed = telemetry['timestamp']
+        if not isinstance(observed, (int, float)) or not 0 <= time.time() - observed <= self.max_age:
+            raise ValueError('Telemetry timestamp must be fresh Unix seconds')
+        image = base64.b64decode(data['jpeg_base64'], validate=True)
+        if not image or len(image) > 8 * 1024 * 1024:
+            raise ValueError('JPEG must be between 1 byte and 8 MiB')
+        if hashlib.sha256(image).hexdigest() != data['sha256']:
+            raise ValueError('JPEG checksum mismatch')
+        identifier = str(uuid.uuid5(uuid.UUID(session), str(number)))
+        if number <= self.sequence.get(session, -1):
+            return {'frame_id': identifier, 'accepted': False, 'reason': 'duplicate_or_out_of_order'}
+        if session not in self.sequence and len(self.sequence) >= 128:
+            self.sequence.pop(next(iter(self.sequence)))
+        self.sequence[session] = number
+        metadata = {
+            'schema_version': 'firesight.frame.v1',
+            'frame_id': identifier,
+            'session_id': session,
+            'source_frame_id': number,
+            'received_at': datetime.fromtimestamp(observed, timezone.utc).isoformat(),
+            'image': {'sha256': data['sha256']},
+            'telemetry': telemetry,
+            'context': {'latest_keyframe_pose': {'translation': telemetry.get('pose', {}).get('position')}},
+        }
+        self.pending = (image, metadata, data['jpeg_base64'])
+        self.state = 'receiving_from_beagle'
+        self.snapshot = {
+            'frame_id': identifier,
+            'metadata': metadata,
+            'alert': self.snapshot['alert'] if self.snapshot else None,
+            'image': 'data:image/jpeg;base64,' + data['jpeg_base64'],
+        }
+        return {'frame_id': identifier, 'accepted': True}
 
     def fetch(self):
         from urllib.request import Request, build_opener, HTTPRedirectHandler
         class NoRedirect(HTTPRedirectHandler):
             def redirect_request(self, *args, **kwargs): return None
-        request=Request(self.url,headers={'Authorization':'Bearer '+self.token})
-        with build_opener(NoRedirect()).open(request, timeout=5) as response:
-            if response.status==204: return None
-            data=response.read(20*1024*1024+1)
-        if len(data)>20*1024*1024: raise ValueError('Snapshot too large')
+        headers = {'Authorization': 'Bearer ' + self.token} if self.token else {}
+        request = Request(self.url, headers=headers)
+        with build_opener(NoRedirect()).open(request, timeout=3) as response:
+            if response.status == 204:
+                return None
+            data = response.read(20 * 1024 * 1024 + 1)
+        if len(data) > 20 * 1024 * 1024:
+            raise ValueError('Snapshot too large')
         return json.loads(data)
 
     async def tick(self):
-        data=await asyncio.to_thread(self.fetch)
+        if self.pending is not None:
+            image, metadata, b64_img = self.pending
+            self.pending = None
+            observed = timestamp(metadata['received_at'])
+            identifier = metadata['frame_id']
+            self.last_frame = identifier
+            async with self.lock:
+                if time.time() - observed > self.max_age:
+                    return
+                alert = await asyncio.to_thread(self.analyze, image, 'image/jpeg')
+                if time.time() - observed > self.max_age:
+                    return
+                alert['id'] = identifier
+                await self.publish(alert)
+                if self.snapshot and self.snapshot['frame_id'] == identifier:
+                    self.snapshot['alert'] = alert
+                self.processed += 1
+                self.state = 'receiving_from_beagle'
+            return
+
+        try:
+            data = await asyncio.to_thread(self.fetch)
+        except (OSError, TimeoutError):
+            self.state = 'waiting_for_beagle'
+            return
         if not data:
-            self.state='waiting_for_beagle_frames'; return
-        metadata=data['metadata'];identifier=metadata['frame_id'];uuid.UUID(identifier)
-        if identifier==self.last_frame: return
-        observed=timestamp(metadata['received_at'])
-        if metadata['schema_version']!='firesight.frame.v1' or not 0<=time.time()-observed<=self.max_age:
-            self.state='stale_beagle_frame'; return
-        image=base64.b64decode(data['jpeg_base64'],validate=True)
-        if len(image)>14*1024*1024 or hashlib.sha256(image).hexdigest()!=metadata['image']['sha256']:
+            self.state = 'waiting_for_beagle_frames'
+            return
+        metadata = data['metadata']
+        identifier = metadata['frame_id']
+        uuid.UUID(identifier)
+        if identifier == self.last_frame:
+            return
+        observed = timestamp(metadata['received_at'])
+        if metadata['schema_version'] != 'firesight.frame.v1' or not 0 <= time.time() - observed <= self.max_age:
+            self.state = 'stale_beagle_frame'
+            return
+        image = base64.b64decode(data['jpeg_base64'], validate=True)
+        if len(image) > 14 * 1024 * 1024 or hashlib.sha256(image).hexdigest() != metadata['image']['sha256']:
             raise ValueError('Invalid image pair')
-        self.last_frame=identifier
-        self.state='analyzing'
+        self.last_frame = identifier
+        self.snapshot = {
+            'frame_id': identifier,
+            'metadata': metadata,
+            'alert': self.snapshot['alert'] if self.snapshot else None,
+            'image': 'data:image/jpeg;base64,' + data['jpeg_base64'],
+        }
+        self.state = 'analyzing'
         async with self.lock:
-            alert=await asyncio.to_thread(self.analyze,image,'image/jpeg')
-            if time.time()-observed>self.max_age:
-                self.state='analysis_expired';return
-            alert['id']=identifier
+            alert = await asyncio.to_thread(self.analyze, image, 'image/jpeg')
+            if time.time() - observed > self.max_age:
+                self.state = 'analysis_expired'
+                return
+            alert['id'] = identifier
             await self.publish(alert)
-            self.snapshot={'frame_id':identifier,'metadata':metadata,'alert':alert,
-                'image':'data:image/jpeg;base64,'+data['jpeg_base64']}
-            self.processed+=1
-            self.state='receiving_from_beagle'
+            self.snapshot = {
+                'frame_id': identifier,
+                'metadata': metadata,
+                'alert': alert,
+                'image': 'data:image/jpeg;base64,' + data['jpeg_base64'],
+            }
+            self.processed += 1
+            self.state = 'receiving_from_beagle'
 
     def status(self):
-        result=super().status()
-        result['configured']=True
-        result['source']='remote_beagle'
+        result = super().status()
+        result['configured'] = True
+        result['source'] = 'remote_beagle'
+        result['beagle_host'] = self.host
+        result['beagle_ws_url'] = self.ws_url
+        result['beagle_video_url'] = self.video_url
         return result

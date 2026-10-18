@@ -109,60 +109,68 @@ The root-level `wildfire_analyzer.py` remains as a compatibility launcher for ex
 
 JPEG/PNG analysis uses Gemini Vision when configured, or a single-frame OpenCV color/brightness heuristic. Video analysis uses OpenCV. Neither detector is a verified fire assessment; video/container support depends on the codecs available in the local OpenCV build.
 
-## Dashboard
+## Dashboard & Beagle Eyes Integration
 
-With the API running, open http://localhost:8787/ to upload a JPEG/PNG, analyze it using the configured detector, inspect the latest alert and its JSON, and preview the G2 text. The dashboard polls `/latest` and keeps up to 20 alerts in memory for the current browser session. Alerts older than 15 seconds are labeled stale. The image preview is your uploaded file, not a live drone stream or necessarily the source of an incoming alert. G2 delivery is not confirmed by this preview. No frontend build is required. Use this with the local API; public hosting requires authentication and upload limits.
+The map-first FireSight dashboard (`src/firesight/dashboard/index.html`) integrates directly with **Beagle Eyes** (`vendor/beagle_eyes`) for both:
+- **Live 30 FPS video & telemetry streaming** over WebSocket (`ws://<beagle-host>:8765/ws`), displaying real-time DPVO XYZ pose, stream FPS / VO Hz, inference latency, 3D person detections, and live map trajectory.
+- **FireSight AI hazard analysis & G2 glasses alerts**, where `TelemetryBroadcaster` (`vendor/beagle_eyes/broadcast/broadcaster.py`) serves paired `firesight.frame.v1` frame + telemetry bundles on `GET /snapshot` (port `8765`) and optionally pushes bundles to `POST /ingest/beagle` when `FIRESIGHT_URL` is set.
 
-## Connect Greg’s Beagle Eyes app (later)
+### 1. Install Beagle Eyes (`vendor/beagle_eyes`)
 
-The dashboard does not require the old VM. Greg’s computer receives the drone RTMP stream and runs Beagle/DPVO. This backend requests paired camera frames and relative coordinates from that running application. GitHub stores the code; it is not the live data endpoint.
-
-**Leave BEAGLE_URL unset for now.** With neither BEAGLE_URL nor FRAME_DIR configured, the dashboard shows an empty frame area and unavailable coordinates. No drone frames or positions are fabricated.
-
-### 1. Enable export on Greg’s computer
-
-Copy this dashboard project onto Greg’s computer alongside his working beagle_eyes checkout. From this project, run:
+Run the installer script to clone/update `vendor/beagle_eyes`, initialize the `Deep-Visual-Odometry-SLAM` submodule cleanly, and build DPVO CUDA extensions if a CUDA toolkit is present:
 
 ```sh
-python3 integrations/beagle/install_adapter.py /absolute/path/to/beagle_eyes
+./packages/install_beagle_eyes.sh
+# Or skip CUDA extension compilation (e.g., when only running mock_sender.py):
+./packages/install_beagle_eyes.sh vendor/beagle_eyes --skip-build
 ```
 
-This creates scripts/uav_vo_dashboard.py and scripts/firesight_export.py in his checkout, preserving the original uav_vo.py. It refuses to overwrite an existing adapter and stops if the source insertion points changed. Use Greg’s existing working Python/DPVO environment and configuration.
+### 2. Run Beagle Eyes + FireSight Dashboard (Local End-to-End)
 
-Set a private token in the terminal (use the same value on both computers; never commit it):
+#### Terminal 1 — Start Beagle Eyes Broadcaster (Port `8765`)
+
+Activate your environment (`conda activate visual_slam` for DPVO) and start one of the Beagle Eyes sources:
 
 ```sh
-export BEAGLE_EXPORT_TOKEN='YOUR_PRIVATE_SHARED_TOKEN'
-# Default bind is localhost. On a trusted shared LAN only:
-export BEAGLE_EXPORT_BIND=0.0.0.0
-cd /absolute/path/to/beagle_eyes
-python scripts/uav_vo_dashboard.py --config config/uav_config.yaml
+# Option A: Mock 3D flight + telemetry (instant test, no drone or GPU needed)
+python3 vendor/beagle_eyes/broadcast/mock_sender.py
+# (Add --webcam to stream real /dev/video0 webcam video with mock 3D telemetry)
+
+# Option B: Laptop webcam + live DPVO + 3D Person Survey
+python3 vendor/beagle_eyes/scripts/webcam_vo.py --detect-people
+
+# Option C: DJI Mini 5 Pro (RC 2) RTMP stream + live DPVO + 3D Person Survey
+python3 vendor/beagle_eyes/scripts/uav_vo.py \
+  --config vendor/beagle_eyes/config/uav_config.yaml \
+  --plot-mode 3d --stride 2 --vo-scale 0.5 --detect-people
 ```
 
-The adapter exposes GET /snapshot on port 8791. It requires an Authorization: Bearer header and exports at most two snapshots per second. Each response contains matching JPEG bytes, metadata, frame ID, observation timestamp, checksum and, when initialized, latest keyframe translation. It returns 204 after five seconds without a new exported frame. It does not export the point cloud or run hazard analysis.
+When running, `TelemetryBroadcaster` serves on port `8765`:
+- `ws://<ip>:8765/ws` — Live 30 FPS binary JPEG frames + 30 Hz JSON telemetry
+- `http://<ip>:8765/video.mjpg` — Live MJPEG video stream
+- `http://<ip>:8765/snapshot` — Paired `firesight.frame.v1` JSON bundle (`jpeg_base64`, `sha256`, `telemetry`, `metadata`)
+- `http://<ip>:8765/status` — Broadcaster health and client count
 
-### 2. Find the address and connect this backend
-
-On Greg’s Linux computer, `hostname -I` lists local IP addresses. Choose the address reachable from the dashboard backend (typically both computers on the same Wi-Fi). Campus Wi-Fi can block peer traffic. Use a private tunnel if needed. Do not expose unencrypted token-bearing HTTP on the public internet; use HTTPS or an SSH tunnel. For an SSH tunnel, keep export bound to localhost and forward local port 8791 to Greg’s localhost:8791.
-
-On the computer running this dashboard:
+#### Terminal 2 — Start FireSight API & Dashboard (Port `8787`)
 
 ```sh
-export BEAGLE_URL='http://GREG_REACHABLE_IP:8791/snapshot'
-export BEAGLE_EXPORT_TOKEN='THE_SAME_PRIVATE_SHARED_TOKEN'
-export FIRESIGHT_DETECTOR=opencv
-PYTHONPATH=src uvicorn firesight.api:app --host 127.0.0.1 --port 8790
+PYTHONPATH=src uvicorn firesight.api:app --host 0.0.0.0 --port 8787
 ```
 
-Open http://127.0.0.1:8790/ and select **Follow drone**. The backend polls Greg, verifies each pair, analyzes the newest frame using the existing detector, and exposes it to the dashboard at /live. /latest keeps the G2 alert format and uses the original frame ID. Slow inference skips intermediate frames; this is a sampled view, not a full-frame-rate video player. Both computers’ clocks should be synchronized; frames older than 30 seconds are rejected.
+Open **http://127.0.0.1:8787/** in your browser:
+- By default, the FireSight backend automatically polls `http://127.0.0.1:8765/snapshot`, runs the configured fire/hazard detector (`opencv` or `gemini`), updates `/live` and `/latest` for the G2 glasses app, and forwards matched metadata.
+- Meanwhile, the browser dashboard connects directly to `ws://127.0.0.1:8765/ws` for zero-lag 30 FPS video, live XYZ coordinates, FPS / VO Hz, 3D person detections, and live drone path rendering on the 3D map.
 
-To use the existing Gemini code, configure GEMINI_API_KEY, FIRESIGHT_DETECTOR=gemini and a provider-supported GEMINI_MODEL in the backend environment. No keys belong in the browser. The screenshot's X/Z/Alt panel is visual odometry, not GPS. This dashboard displays X/Y/Z as arbitrary-scale relative coordinates associated with the latest keyframe; it does not claim meters, exact current-frame pose, safe paths or wearer position. While Beagle initializes, coordinates remain unavailable.
+### 3. Cross-Laptop / Remote Connection Options
 
-### 3. Verify the live connection
+If Beagle Eyes (Laptop A) and the FireSight dashboard/backend (Laptop B or Render) are on separate machines:
 
-Confirm the receiver status changes to receiving from Beagle, frame IDs change, image and metadata match, and positions appear only after DPVO initialization. Stop Greg’s exporter and confirm the dashboard marks the connection unavailable and clears expired image/position data. G2 delivery and real drone inference must still be tested separately.
-
-The adapter has been source-checked against Greg’s repository, but running his full GPU/DPVO application is still an on-device integration test. There is no configured Greg endpoint in this checkout.
+- **Same LAN / Cloudflare Tunnel (Browser WS + Backend Poll)**:
+  - Point the dashboard's **System links** host input (or URL query param `?beagle=<laptop-A-ip>:8765` or `https://xxxx.trycloudflare.com`) to Laptop A.
+  - On the FireSight backend, set `BEAGLE_URL='http://<laptop-A-ip>:8765/snapshot'` (and optional shared `BEAGLE_EXPORT_TOKEN`).
+- **Outbound Push from Beagle Eyes to Hosted FireSight (`INGEST_MODE=push`)**:
+  - On the hosted FireSight backend, set `INGEST_MODE=push` and `INGEST_TOKEN='<shared-secret>'`.
+  - On Laptop A running Beagle Eyes, set `FIRESIGHT_URL='https://your-firesight-host.onrender.com'` and `INGEST_TOKEN='<shared-secret>'` before launching `uav_vo.py`, `webcam_vo.py`, or `mock_sender.py`. `TelemetryBroadcaster` will automatically push paired frames and telemetry to `/ingest/beagle` in the background.
 
 ## G2 display monitor and API
 
