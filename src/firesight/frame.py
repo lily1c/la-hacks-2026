@@ -1,4 +1,7 @@
 """Decode and analyze one uploaded JPEG or PNG frame."""
+import logging
+import os
+
 import cv2
 import numpy as np
 
@@ -25,9 +28,15 @@ def analyze_frame(image_bytes, media_type, rows=4, cols=4, top=3, width=640):
 
     detector = selected_detector()
     if detector == "gemini":
-        from firesight.gemini import analyze_image_with_gemini
+        from firesight.gemini import GeminiRequestError, analyze_image_with_gemini
 
-        return analyze_image_with_gemini(image_bytes, normalized_type)
+        try:
+            return analyze_image_with_gemini(image_bytes, normalized_type)
+        except GeminiRequestError as error:
+            # Opt-in: keep alerts flowing (e.g. through rate limits) with local analysis.
+            if os.getenv("FIRESIGHT_GEMINI_FALLBACK") != "opencv":
+                raise
+            logging.getLogger(__name__).warning("Gemini failed, using OpenCV for this frame: %s", str(error)[:200])
     if width > 0 and image.shape[1] > width:
         scale = width / image.shape[1]
         image = cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
