@@ -35,7 +35,6 @@ def _response_schema():
             "fire_sector": {"type": "string", "enum": FIRE_SECTORS},
         },
         "required": ["detected", "priority", "headline", "instructions", "fire_sector"],
-        "additionalProperties": False,
     }
 
 
