@@ -7,13 +7,13 @@ services:
     ports:
       - "127.0.0.1:8790:8787"
     environment:
-      FRAME_DIR: /frames
+      INGEST_MODE: push
+      INGEST_TOKEN: ${INGEST_TOKEN:?Set a private ingest token}
+      PUBLIC_DEPLOYMENT: "true"
       G2_REPORT_TOKEN: ${G2_REPORT_TOKEN:-}
       FIRESIGHT_DETECTOR: ${FIRESIGHT_DETECTOR:-opencv}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.8-flash}
-    volumes:
-      - ${BUNDLE_DIRECTORY:?Set the existing receiver bundle directory}:/frames:ro
     logging:
       options:
         max-size: "5m"

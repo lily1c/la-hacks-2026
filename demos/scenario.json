@@ -1,0 +1,9 @@
+{
+  "note": "DEMO SCENARIO - invented field data for testing. Not real conditions.",
+  "wearer": "Firefighter on foot on the ridge trail. Top of the drone image is straight ahead of them.",
+  "wind": "From the southwest at 15 km/h, pushing fire ahead and to the right",
+  "escape_route": "Trail going down and to the right of the wearer, toward the creek",
+  "safe_zone": "Creek crossing, about 300 m down-right",
+  "hazards": "Spot fire reported 50 m behind the wearer",
+  "crews": "Crew 2 is 200 m to the wearer's left"
+}

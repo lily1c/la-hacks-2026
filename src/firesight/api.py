@@ -8,15 +8,18 @@ import hmac
 from datetime import datetime, timezone
 from pydantic import BaseModel, Field
 import os
+import re
 import tempfile
 from pathlib import Path
 
 import cv2
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse, Response
 
 from firesight.alerts import validate_alert
+from firesight.mapview import render_map
 from firesight.frame import SUPPORTED_IMAGE_TYPES, analyze_frame
 from firesight.gemini import GeminiConfigurationError, GeminiRequestError
 from firesight.video import analyze_video
@@ -41,6 +44,7 @@ async def lifespan(app):
 
 
 app = FastAPI(title="FireSight API", version="1.0.0", lifespan=lifespan)
+app.mount("/assets", StaticFiles(directory=Path(__file__).parent / "dashboard"), name="assets")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -96,7 +100,27 @@ async def get_latest():
             expired = True
         if expired:
             return Response(status_code=204)
-        return JSONResponse(content=latest_alert)
+        alert = latest_alert
+    if os.getenv("FIRESIGHT_DEMO_MAP") == "true":
+        # Placeholder map for demos; the glasses re-download it only when map_url changes.
+        # Place the map's fire in the sector the detector reported, e.g. "Check upper-left frame sector".
+        # Gemini reports fire_sector; the OpenCV detector names it in "Check <sector> frame sector".
+        sector = alert.get("fire_sector")
+        if not sector:
+            matches = (re.match(r"Check (.+) frame sector", line) for line in alert["instructions"])
+            match = next((m for m in matches if m), None)
+            sector = match.group(1) if match else "none"
+        direction = f"&dir={sector}"
+        alert = {**alert, "map_url": f"/view.png?v={alert['id']}{direction}"}
+    return JSONResponse(content=alert)
+
+
+@app.get("/view.png")
+async def get_view(v: str = "", dir: str = ""):
+    """Placeholder tactical map; fire placed in the reported sector, details seeded by v."""
+    if os.getenv("FIRESIGHT_DEMO_MAP") != "true":
+        return Response(status_code=404)
+    return Response(content=await asyncio.to_thread(render_map, v, dir or None), media_type="image/png")
 
 
 class G2DisplayReport(BaseModel):
