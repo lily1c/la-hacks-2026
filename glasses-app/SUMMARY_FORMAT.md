@@ -68,7 +68,7 @@ Content-Type: audio/wav
 
 Respond `200 OK` (any body) once it's received. Anything else shows "Report FAILED" on the glasses.
 
-Suggested handling: transcribe it (e.g. Whisper), feed the transcript into the next LLM summary as a field report, and keep the audio for the incident log. CORS must allow `POST` and the `Content-Type` header (preflight `OPTIONS` -> `204`).
+CORS must allow `POST` and the `Content-Type` header (preflight `OPTIONS` -> `204`).
 
 ## Testing without the real backend
 

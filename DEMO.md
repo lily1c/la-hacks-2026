@@ -27,7 +27,7 @@ FIRE SPREADING AHEAD AND RIGHT        │ ▲          ████    │
 | **Frames** | Demo. Six variations (crops, mirror images, a black-and-white "smoke only" copy) of one real wildfire photo, so the fire lands in different parts of the frame. You can use your own images instead. |
 | **Analysis** | **Real.** Each frame goes through the detector: OpenCV fire-color detection by default, or Gemini if you add an API key. |
 | **Instructions** | **Real output of the analysis.** OpenCV can only say *where* fire is ("Check upper-left frame sector"). Gemini mode writes action instructions using the image plus a scenario file. |
-| **Field data** for Gemini (wind, escape route, safe zone, crews) | Demo. Invented in [`demo_scenario.json`](demo_scenario.json). In a real deployment this would come from GPS, weather and command. |
+| **Field data** for Gemini (wind, escape route, safe zone, crews) | Demo. Invented in [`demo_scenario.json`](demo_scenario.json). |
 | **Map** | Demo placeholder. The wearer (◎), escape route and safe zone (□) are drawn, not measured. **The fire is placed in the part of the frame the analysis reported**, so the map matches the instructions. |
 
 Nothing in this demo is real evacuation guidance.
