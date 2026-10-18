@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import hmac
 import json
 import os
+import sys
 from pathlib import Path
 import re
 import tempfile
@@ -12,6 +13,7 @@ import time
 
 import cv2
 
+from firesight.config import load_dotenv
 from firesight.alerts import validate_alert
 from firesight.mapview import render_map
 from firesight.frame import SUPPORTED_IMAGE_TYPES, analyze_frame
@@ -31,6 +33,8 @@ except ModuleNotFoundError:
     _HAS_FASTAPI = False
 
 
+if not {"unittest", "pytest"} & set(sys.modules):  # tests must not pick up a real API key
+    load_dotenv()
 latest_alert = None
 g2_report = None
 alert_lock = asyncio.Lock()

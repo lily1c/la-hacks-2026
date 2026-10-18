@@ -111,6 +111,30 @@ If Beagle Eyes (Laptop A) and the FireSight dashboard/backend (Laptop B or Rende
   - On the hosted FireSight backend, set `INGEST_MODE=push` and `INGEST_TOKEN='<shared-secret>'`.
   - On Laptop A running Beagle Eyes, set `FIRESIGHT_URL='https://your-firesight-host.onrender.com'` and `INGEST_TOKEN='<shared-secret>'` before launching `uav_vo.py`, `webcam_vo.py`, or `mock_sender.py`. `TelemetryBroadcaster` will automatically push paired frames and telemetry to `/ingest/beagle` in the background.
 
+## Gemini map annotations
+
+Tell Gemini what to mark; it returns regions in the drone frame, which are cast onto the ground and drawn on the map. Use the **Gemini annotations** card in the dashboard: type an instruction (or pick a preset such as *Car crash* or *Trees*), press **Annotate now** or turn on **Auto**, and toggle layers per kind.
+
+**API key.** Create a key in [Google AI Studio](https://aistudio.google.com/apikey) and put it in a git-ignored `.env` at the repository root (the server loads it at startup; real environment variables win):
+
+```sh
+cp .env.example .env     # then edit GEMINI_API_KEY=...
+```
+
+Never commit `.env`, and never put the key in the dashboard or glasses app. Optional settings: `GEMINI_ANNOTATE_MODEL` (fast model for annotations, default `gemini-3.5-flash-lite`; use a model your key can access) and `GEMINI_MODEL` (frame analysis).
+
+**Placement needs geo telemetry.** Start Beagle Eyes with `--gps-tf` (see `vendor/beagle_eyes/gps_tf/README.md`):
+
+```sh
+python scripts/uav_vo.py --detect-people --gps-tf --gps-origin 34.070233,-118.445185 \
+  --gps-heading 0 --gps-cam-pitch 0 --gps-start-height 1.5 --gps-autocal
+```
+
+Without it, Gemini still runs but annotations are listed as "not placed". Results are approximate until scale is calibrated.
+
+API: `GET /annotations`, `POST /annotations/config` (`prompt`, `auto`, `interval_s`), `POST /annotations/run`, `DELETE /annotations`.
+Latency: frames are downscaled to 768 px, thinking is minimal, and calls run off the video path. Annotations expire after 60 s.
+
 ## G2 display monitor and API
 
 The dedicated G2 panel polls the same GET /latest endpoint used by the glasses app, independently of manual/drone preview. The left side shows the outgoing alert formatted approximately like the G2 text layout (9 lines, 44 characters). It is not a hardware screenshot; maps, microphone status, local time zone and transient phone messages may differ.
