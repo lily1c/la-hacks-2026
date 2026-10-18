@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FireSight · Video Receiver</title><link rel="stylesheet" href="/style.css"><script type="module" src="/app.js"></script></head>
+<body>
+<header><a class="brand" href="/">◈ <span>FireSight</span></a><span class="tag">LA HACKS 2026</span><span class="local">LOCAL WORKSPACE</span></header>
+<main>
+  <div class="eyebrow">VIDEO INGEST / 01</div>
+  <h1>One feed.<br><span>A shared view.</span></h1>
+  <p class="intro">Connect your aerial video source. Relay it to computer vision and preview the incoming feed in one place.</p>
+  <div class="flow"><span>01 &nbsp; Drone / video source</span><b>→</b><span class="active">02 &nbsp; FireSight receiver</span><b>→</b><span>03 &nbsp; OpenCV teammate</span></div>
+  <div class="workspace">
+    <section class="panel source">
+      <div class="section-label">SOURCE CONNECTION <span>01</span></div>
+      <h2>Bring in a video feed</h2>
+      <div class="tabs"><button id="pull-tab" class="selected" type="button">Paste stream URL</button><button id="publish-tab" type="button">Receive a publisher</button></div>
+      <form id="source-form">
+        <label for="url">VIDEO STREAM ADDRESS</label>
+        <input id="url" name="url" type="url" placeholder="rtsp://source-address:8554/live" autocomplete="off" spellcheck="false" required>
+        <p class="hint">RTSP, RTMP, or a direct HLS (.m3u8) URL. A YouTube link or video webpage won't work.</p>
+        <button class="primary" id="connect">Connect source <span>↗</span></button>
+      </form>
+      <div id="publisher" hidden>
+        <p class="hint">Let OBS, FFmpeg, or a compatible drone controller send video here. Switching modes disconnects the current feed.</p>
+        <label>RTMP PUBLISH ADDRESS</label><code id="publish-url">rtmp://127.0.0.1:1935/firesight</code>
+        <p class="hint">OBS server: rtmp://127.0.0.1:1935 · Stream key: firesight</p>
+        <button id="enable-publish" class="primary">Enable receiver <span>↗</span></button>
+      </div>
+      <p id="feedback" role="status" aria-live="polite"></p>
+      <div class="connection-note"><span>↳</span><p>The receiver runs on this Mac. For a teammate on the same network, enable LAN mode using the command in the README.</p></div>
+    </section>
+    <section class="panel preview">
+      <div class="section-label">INCOMING FEED <span id="badge">WAITING</span></div>
+      <div class="screen" id="screen"><div id="empty"><div class="crosshair">⌖</div><h3 id="screen-title">Waiting for video</h3><p id="screen-message">Connect a source or start publishing to this receiver.</p></div><iframe id="player" title="Live incoming video" allow="autoplay; fullscreen" hidden></iframe></div>
+      <div class="metrics"><div><label>RELAY</label><strong id="relay">Checking…</strong></div><div><label>TRACKS</label><strong id="tracks">—</strong></div><div><label>RECEIVED</label><strong id="bytes">0 MB</strong></div><div><label>READERS</label><strong id="readers">0</strong></div></div>
+      <p class="hint">Preview uses HLS and may trail the source by several seconds. Use RTSP for OpenCV. Compatible codecs are required; this relay does not transcode.</p>
+    </section>
+  </div>
+  <section class="panel outputs"><div><div class="section-label">TEAM HANDOFF / 02</div><h2>Ready for computer vision.</h2><p class="hint">Share the RTSP address with your OpenCV teammate. localhost addresses work only on this Mac.</p></div><div class="endpoints"><label>OPENCV · RTSP</label><div class="copyline"><code id="rtsp">rtsp://127.0.0.1:8554/firesight</code><button data-copy="rtsp">Copy</button></div><label>BROWSER / HLS PLAYLIST</label><div class="copyline"><code id="hls">http://127.0.0.1:8888/firesight/index.m3u8</code><button data-copy="hls">Copy</button></div><p id="lan" class="hint"></p></div></section>
+  <footer><span>FIRESIGHT / STREAM OPERATIONS</span><span>Prototype · Local relay · No inference running</span></footer>
+</main>
+</body></html>

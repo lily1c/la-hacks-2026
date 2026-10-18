@@ -1,0 +1,9 @@
+.runtime/
+.env
+.DS_Store
+node_modules/
+*.log
+__pycache__/
+cloud/.env
+cloud/mediamtx.generated.yml
+cloud/data/

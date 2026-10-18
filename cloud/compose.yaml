@@ -1,0 +1,47 @@
+services:
+  relay:
+    image: bluenviron/mediamtx:1.21.2
+    restart: unless-stopped
+    ports:
+      - "1935:1935"
+      - "8554:8554"
+    volumes:
+      - ./mediamtx.generated.yml:/mediamtx.yml:ro
+    logging:
+      options:
+        max-size: "5m"
+        max-file: "2"
+  snapshots:
+    build:
+      context: ..
+      dockerfile: cloud/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - relay
+    environment:
+      STREAM_URL: rtsp://reader:${READ_PASSWORD:?Run cloud/configure.py first}@relay:8554/live/dji
+      FRAME_DIR: /data/bundles
+    volumes:
+      - ./data:/data
+    command: ["python", "scripts/capture_frames.py", "--interval", "1"]
+    logging:
+      options:
+        max-size: "5m"
+        max-file: "2"
+  delivery:
+    profiles: [ai]
+    build:
+      context: ..
+      dockerfile: cloud/Dockerfile
+    restart: unless-stopped
+    environment:
+      FRAME_DIR: /data/bundles
+      AI_ENDPOINT: ${AI_ENDPOINT:-}
+      AI_TOKEN: ${AI_TOKEN:-}
+    volumes:
+      - ./data:/data
+    command: ["python", "integrations/beagle_eyes/frame_bridge.py"]
+    logging:
+      options:
+        max-size: "5m"
+        max-file: "2"
