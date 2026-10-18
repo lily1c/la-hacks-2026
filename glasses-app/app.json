@@ -16,6 +16,10 @@
     {
       "name": "g2-microphone",
       "desc": "Records voice reports from the field while the wearer holds the temple."
+    },
+    {
+      "name": "location",
+      "desc": "Shows the wearer on the command map and the distance to mapped hazards."
     }
   ],
   "supported_languages": [

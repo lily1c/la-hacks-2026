@@ -12,6 +12,7 @@ import {
 } from '@evenrealities/even_hub_sdk'
 import { parseSummary, type Summary } from './summary'
 import { pcmToWav, pcmSeconds } from './voice'
+import { startLocationReports, hazardLine, type Nearby } from './location'
 
 // Where the backend serves the latest summary. Override with VITE_SUMMARY_URL in .env.local.
 const SUMMARY_URL = import.meta.env.VITE_SUMMARY_URL ?? 'http://localhost:8790/latest'
@@ -58,6 +59,10 @@ async function reportDisplay(alertId: string, text: string, state: 'sdk_accepted
     if (!response.ok) console.warn('Display report rejected:', response.status)
   } catch { console.warn('Display report unavailable') }
 }
+// Nearest mapped hazards from the backend, refreshed with each location report.
+let nearby: Nearby[] = []
+let nearbyAt = 0
+startLocationReports(bridge, new URL('/wearer', SUMMARY_URL).href, REPORT_TOKEN, (list) => { nearby = list; nearbyAt = Date.now() })
 let mapShown: string | null = null
 let mapBusy = false
 
@@ -123,11 +128,12 @@ function headerLine(s: Summary): string {
 // Text for each container in the current layout.
 function render(): Record<number, string> {
   const top = topLines()
-  const steps = summary ? summary.instructions.map((s) => `- ${s}`) : []
+  const hazard = Date.now() - nearbyAt < 20000 ? hazardLine(nearby) : ''
+  const steps = [...(hazard ? [`>> ${hazard}`] : []), ...(summary ? summary.instructions.map((s) => `- ${s}`) : [])]
 
   if (layout === 'text') {
     const { mainLines, mainChars } = LIMITS.text
-    const lines = summary ? [...top, headerLine(summary), summary.headline.toUpperCase(), '', ...steps] : top
+    const lines = summary ? [...top, headerLine(summary), summary.headline.toUpperCase(), '', ...steps] : [...top, ...steps]
     return { [MAIN_ID]: lines.slice(0, mainLines).map((l) => clip(l, mainChars)).join('\n') }
   }
 
