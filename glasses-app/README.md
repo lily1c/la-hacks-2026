@@ -45,7 +45,9 @@ The only link between the pipeline and the glasses is the API in [SUMMARY_FORMAT
 - **Avoids unnecessary redraws.** The app only sends text to the glasses when the content actually changes, which saves Bluetooth bandwidth and battery.
 - **Live fire map.** When the backend sends a map image, the display splits: headline top-left, a 288×144 map top-right (fire, wearer, escape route, safe zone), instructions below. The image is only re-sent when it changes, since images are slow over Bluetooth.
 - **Voice reports.** Hold a temple to record from the glasses microphone, like a walkie-talkie, and release to send. The app shows `● REC 0:03` while recording and `Report sent` or `Report FAILED` afterwards. The audio goes to the backend as a WAV file for transcription, so firefighters can report what they see back to command.
-- **Glasses controls:** tap to fetch immediately, hold to record a voice report, double-tap to exit (the system confirmation dialog appears, as Even requires).
+- **Wearer GPS and telemetry.** Every 5 s the app sends the phone's GPS, IMU samples, button presses and device status to the backend (`POST /wearer`, needs `VITE_G2_REPORT_TOKEN`). The nearest mapped hazard is shown as a line like `>> Fire front: ~180 m NE`. When no drone alert is active, the screen shows an alert built from GPS with a north-up map around the wearer.
+- **Fall check and SOS.** An impact above 3 g (`VITE_FALL_G`) followed by stillness asks "Are you OK? Tap to confirm"; no tap within 20 s reports MAN DOWN. Holding a temple sends SOS. Both appear on the dashboard map.
+- **Glasses controls:** tap = I'm OK / cancel SOS, otherwise acknowledge the alert and refresh. Hold = SOS (or record a voice report when `VITE_ENABLE_VOICE_REPORTS=true`). Scroll = step through nearby hazards. Double-tap = exit (the system confirmation dialog appears, as Even requires).
 
 ## Code
 

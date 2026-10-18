@@ -7,7 +7,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from firesight.api import app, wearers
-from firesight.services.wearer import WearerStore, bearing_deg, distance_m, nearby_hazards, situation, validate_position
+from firesight.services.wearer import WearerStore, bearing_deg, distance_m, motion_state, nearby_hazards, situation, validate_position
 
 HERE = [34.0722, -118.4452]  # UCLA
 
@@ -52,6 +52,25 @@ class GeometryTests(unittest.TestCase):
         self.assertEqual(wearer["imu"]["n"], 2)
         self.assertEqual(wearer["imu"]["rate_hz"], 10.0)
         self.assertEqual([i["type"] for i in wearer["inputs"]], ["click", "long_press"])
+
+    def test_motion_state(self):
+        still = [[i * 100, 0.0, -0.03, 1.0] for i in range(50)]
+        walking = [[i * 100, 0.05, -0.03, 1.0 + (0.12 if i % 4 < 2 else -0.12)] for i in range(50)]
+        tilted = [[i * 100, 0.7, 0.0, 0.7] for i in range(50)]
+        self.assertEqual(motion_state(still)["state"], "still")
+        self.assertEqual(motion_state(walking)["state"], "walking")
+        self.assertEqual(motion_state(tilted)["state"], "tilted")
+        self.assertIsNone(motion_state([]))
+
+    def test_status_and_ack(self):
+        store = WearerStore()
+        store.update(validate_position({"lat": 1, "lon": 2}), now=10)
+        store.update(validate_position({"lat": 1, "lon": 2, "status": "sos", "ack": {"alert_id": "a1"}}), now=12)
+        store.update(validate_position({"lat": 1, "lon": 2, "status": "sos"}), now=17)
+        wearer = store.fresh(now=18)[0]
+        self.assertEqual((wearer["status"], wearer["status_since"]), ("sos", 12))
+        self.assertEqual(wearer["ack"], {"alert_id": "a1", "at": 12})
+        self.assertEqual(validate_position({"lat": 1, "lon": 2, "status": "hacked"}).get("status"), None)
 
     def test_store_freshness(self):
         store = WearerStore()
