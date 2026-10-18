@@ -1,0 +1,21 @@
+{
+  "name": "firesight-glasses",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "mock": "node mock-server.mjs",
+    "pack": "npm run build && evenhub pack app.json dist --sdk-ver 0.0.16 -o firesight.ehpk",
+    "use-backend": "node scripts/use-backend.mjs"
+  },
+  "devDependencies": {
+    "typescript": "~6.0.2",
+    "vite": "^8.3.0"
+  },
+  "dependencies": {
+    "@evenrealities/even_hub_sdk": "^0.0.16"
+  }
+}

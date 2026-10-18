@@ -1,0 +1,24 @@
+{
+  "package_id": "com.dakshaarvind.firesight",
+  "name": "FireSight",
+  "version": "0.2.0",
+  "edition": "202601",
+  "min_sdk_version": "0.0.16",
+  "entrypoint": "index.html",
+  "permissions": [
+    {
+      "name": "network",
+      "desc": "Receives live wildfire summaries from the command backend.",
+      "whitelist": [
+        "http://localhost:8790"
+      ]
+    },
+    {
+      "name": "g2-microphone",
+      "desc": "Records voice reports from the field while the wearer holds the temple."
+    }
+  ],
+  "supported_languages": [
+    "en"
+  ]
+}
