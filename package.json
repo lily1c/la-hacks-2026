@@ -1,0 +1,7 @@
+{
+  "name": "firesight-glasses-api-mock",
+  "private": true,
+  "scripts": {
+    "mock": "node mock_server.js"
+  }
+}
