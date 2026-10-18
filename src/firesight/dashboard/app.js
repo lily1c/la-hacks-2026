@@ -339,11 +339,18 @@ function annRender(){
 async function annPoll(){try{const r=await fetch(apiBase+'/annotations',{cache:'no-store',signal:AbortSignal.timeout(4000)});if(r.ok){annData=await r.json();annRender();}else if(r.status===404){$('annStatus').textContent='Annotations need the FastAPI backend (pip install -e .).';}}catch{}setTimeout(annPoll,1500);}
 annSetup();annPoll();
 
-// ---- G2 wearer: phone GPS reported by the glasses app (served by /wearer) ----
+// ---- G2 wearer: phone GPS and glasses telemetry (served by /wearer) ----
 const wearerMarkers=new Map();let wearerCentered=false;
-function wearerElement(id){const el=document.createElement('div');el.className='wearer-marker';el.title=`G2 wearer · ${id}`;el.innerHTML='<span></span><b>G2</b>';return el;}
+const ALARM={sos:'SOS',man_down:'MAN DOWN',check:'CHECKING'};
+function wearerElement(id){const el=document.createElement('div');el.className='wearer-marker';el.innerHTML='<span></span><b></b>';return el;}
+function wearerLabel(w){const alarm=ALARM[w.status];if(alarm)return `${alarm} · ${w.device_id}`;const parts=['G2'];if(w.motion)parts.push(w.motion.state);if(w.device&&w.device.battery!=null)parts.push(`${w.device.battery}%`);return parts.join(' · ');}
+function wearerTitle(w){const lines=[`G2 wearer: ${w.device_id}`,`Status: ${w.status||'ok'}`];if(w.motion)lines.push(`Motion: ${w.motion.state}, head tilt ${w.motion.tilt_deg}°`);if(w.accuracy_m!=null)lines.push(`GPS accuracy: ±${w.accuracy_m} m`);if(w.ack)lines.push(`Acknowledged alert ${w.ack.alert_id} at ${new Date(w.ack.at*1000).toLocaleTimeString()}`);const press=(w.inputs||[]).slice(-1)[0];if(press)lines.push(`Last button: ${press.type} (${press.source})`);return lines.join('\n');}
+function wearerBanner(alarms){let el=document.getElementById('wearerAlarm');if(!el){el=document.createElement('div');el.id='wearerAlarm';el.className='wearer-alarm';el.onclick=()=>{const w=alarms[0];if(w&&map)map.easeTo({center:[w.lon,w.lat],zoom:Math.max(map.getZoom(),17)});};document.body.append(el);}
+el.hidden=!alarms.length;if(alarms.length)el.textContent=alarms.map(w=>`${ALARM[w.status]}: ${w.device_id} · ${w.lat.toFixed(5)}, ${w.lon.toFixed(5)}`).join('   |   ')+'   (click to locate)';}
 async function wearerPoll(){try{const r=await fetch(apiBase+'/wearer',{cache:'no-store',signal:AbortSignal.timeout(4000)});if(r.ok&&map&&glMod){const {wearers}=await r.json();const seen=new Set();
 for(const w of wearers){seen.add(w.device_id);const at=[w.lon,w.lat];let m=wearerMarkers.get(w.device_id);if(!m){m=new glMod.Marker({element:wearerElement(w.device_id)}).setLngLat(at).addTo(map);wearerMarkers.set(w.device_id,m);}else m.setLngLat(at);
+const el=m.getElement();el.querySelector('b').textContent=wearerLabel(w);el.title=wearerTitle(w);el.classList.toggle('alarm',w.status==='sos'||w.status==='man_down');el.classList.toggle('checking',w.status==='check');
 if(!wearerCentered){wearerCentered=true;map.easeTo({center:at});}}
-for(const [id,m] of wearerMarkers)if(!seen.has(id)){m.remove();wearerMarkers.delete(id);}}}catch{}finally{setTimeout(wearerPoll,2000);}}
+for(const [id,m] of wearerMarkers)if(!seen.has(id)){m.remove();wearerMarkers.delete(id);}
+wearerBanner(wearers.filter(w=>w.status==='sos'||w.status==='man_down'));}}catch{}finally{setTimeout(wearerPoll,2000);}}
 wearerPoll();

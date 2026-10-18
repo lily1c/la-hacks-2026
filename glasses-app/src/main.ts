@@ -14,6 +14,7 @@ import { parseSummary, type Summary } from './summary'
 import { pcmToWav, pcmSeconds } from './voice'
 import { startLocationReports, hazardLine, type Nearby } from './location'
 import { startTelemetry, type InputType } from './telemetry'
+import { createSafety } from './safety'
 
 // Where the backend serves the latest summary. Override with VITE_SUMMARY_URL in .env.local.
 const SUMMARY_URL = import.meta.env.VITE_SUMMARY_URL ?? 'http://localhost:8790/latest'
@@ -66,7 +67,16 @@ let nearbyAt = 0
 let gpsSummary: Summary | null = null
 let gpsMapUrl: string | null = null
 const telemetry = startTelemetry(bridge)
-startLocationReports(bridge, new URL('/wearer', SUMMARY_URL).href, REPORT_TOKEN, telemetry.collect, (reply) => {
+// Fall check, man-down and SOS. Status changes are reported straight away.
+const safety = createSafety({
+  fallG: Number(import.meta.env.VITE_FALL_G ?? 3),
+  settleMs: 5000,
+  stillSpreadG: 0.05,
+  confirmMs: 20000,
+  onChange: (next) => { telemetry.setStatus(next); reports.sendNow(); refresh() },
+})
+let hazardIndex = 0
+const reports = startLocationReports(bridge, new URL('/wearer', SUMMARY_URL).href, REPORT_TOKEN, telemetry.collect, (reply) => {
   nearby = reply.nearby
   nearbyAt = Date.now()
   gpsSummary = reply.situation ? parseSummary(reply.situation) : null
@@ -116,6 +126,8 @@ function wrap(text: string, max: number): string[] {
 
 function topLines(): string[] {
   const lines: string[] = []
+  const alarm = safety.line()
+  if (alarm) lines.push(alarm)
   if (recording) {
     const secs = Math.floor((Date.now() - recordStartedAt) / 1000)
     lines.push(`● REC 0:${String(secs).padStart(2, '0')}`)
@@ -309,6 +321,7 @@ async function pollLoop() {
 pollLoop()
 // Keeps the "NO SIGNAL" age and recording timer current.
 setInterval(() => {
+  safety.tick()
   if (recording && Date.now() - recordStartedAt > MAX_RECORD_SECONDS * 1000) stopRecording()
   refresh()
 }, 1000)
@@ -361,7 +374,11 @@ bridge.onEvenHubEvent((event) => {
 
   const sys = event.sysEvent
   if (sys?.eventType === OsEventTypeList.IMU_DATA_REPORT) {
-    if (sys.imuData) telemetry.imu(sys.imuData.x ?? 0, sys.imuData.y ?? 0, sys.imuData.z ?? 0)
+    if (sys.imuData) {
+      const { x = 0, y = 0, z = 0 } = sys.imuData
+      telemetry.imu(x, y, z)
+      safety.imu(x, y, z)
+    }
     return
   }
 
@@ -379,13 +396,34 @@ bridge.onEvenHubEvent((event) => {
   switch (input.eventType) {
     case OsEventTypeList.CLICK_EVENT:
     case undefined: // SDK normalizes 0 to undefined in some cases
-      // Tap to fetch immediately instead of waiting for the next poll.
-      if (!recording) fetchLatest()
+      if (recording) break
+      if (safety.tap()) {
+        setStatus('OK sent to command', 3000)
+      } else {
+        // Acknowledge the alert on screen, and fetch immediately.
+        const current = activeSummary()
+        if (current) {
+          telemetry.ack(current.id)
+          reports.sendNow()
+          setStatus('Acknowledged', 3000)
+        }
+        fetchLatest()
+      }
+      break
+
+    case OsEventTypeList.SCROLL_TOP_EVENT:
+    case OsEventTypeList.SCROLL_BOTTOM_EVENT:
+      // Step through nearby mapped hazards.
+      if (nearby.length) {
+        hazardIndex = (hazardIndex + (input.eventType === OsEventTypeList.SCROLL_TOP_EVENT ? nearby.length - 1 : 1)) % nearby.length
+        setStatus(`${hazardIndex + 1}/${nearby.length} ${hazardLine([nearby[hazardIndex]])}`, 5000)
+      }
       break
 
     case OsEventTypeList.LONG_PRESS_EVENT:
-      // Hold to record a voice report, like a walkie-talkie.
+      // Hold for SOS, or to record a voice report when voice reports are enabled.
       if (import.meta.env.VITE_ENABLE_VOICE_REPORTS === 'true') startRecording()
+      else safety.sos()
       break
 
     case OsEventTypeList.LONG_PRESS_RELEASE_EVENT:

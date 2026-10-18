@@ -14,6 +14,8 @@ export function startTelemetry(bridge: EvenAppBridge) {
   let device: Record<string, boolean | number> | null = null
   let imuOn = false
   let imuEvents = 0
+  let status = 'ok'
+  let ack: string | null = null
 
   // P100 = report every 100 ms. Like the microphone, this only works once the startup page exists.
   async function enableImu() {
@@ -37,6 +39,8 @@ export function startTelemetry(bridge: EvenAppBridge) {
 
   return {
     enableImu,
+    setStatus(next: string) { status = next },
+    ack(alertId: string) { ack = alertId },
     imu(x: number, y: number, z: number) {
       imuEvents += 1
       imu.push([Date.now(), x, y, z])
@@ -52,6 +56,8 @@ export function startTelemetry(bridge: EvenAppBridge) {
       if (imu.length) body.imu = imu.splice(0)
       if (inputs.length) body.inputs = inputs.splice(0)
       body.device = { ...(device ?? {}), imu_on: imuOn, imu_events: imuEvents }
+      body.status = status
+      if (ack) { body.ack = { alert_id: ack }; ack = null }
       refreshDevice()  // for the next report
       // Retry until the IMU starts streaming.
       if (!imuEvents) enableImu()

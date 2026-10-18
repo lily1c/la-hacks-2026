@@ -78,6 +78,7 @@ export function startLocationReports(
 
   send()
   setInterval(send, SEND_MS)
+  return { sendNow: send }
 }
 
 // "Fire front: ~180 m NE", or "" if nothing is mapped near the wearer.

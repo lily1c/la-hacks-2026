@@ -8,6 +8,9 @@ NEARBY_LIMIT = 3
 COMPASS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
 INPUT_TYPES = {"click", "double_click", "scroll_up", "scroll_down", "long_press", "long_press_release"}
 INPUT_SOURCES = {"right", "left", "ring", "unknown"}
+STATUSES = {"ok", "check", "man_down", "sos"}
+WALKING_SPREAD_G = 0.05  # spread of |acceleration| above this means the wearer is moving
+TILTED_DEG = 35          # head tilted further than this from upright
 MAX_IMU_SAMPLES = 120
 MAX_INPUT_LOG = 20
 
@@ -56,6 +59,12 @@ def _validate_telemetry(data):
                    if isinstance(s, list) and len(s) == 4 and all(_number(v) for v in s)]
         if samples:
             out["imu"] = samples
+    status = data.get("status")
+    if status in STATUSES:
+        out["status"] = status
+    ack = data.get("ack")
+    if isinstance(ack, dict) and isinstance(ack.get("alert_id"), str) and 1 <= len(ack["alert_id"]) <= 128:
+        out["ack"] = {"alert_id": ack["alert_id"]}
     inputs = data.get("inputs")
     if isinstance(inputs, list):
         out["inputs"] = [{"type": i["type"], "source": i.get("source", "unknown"), "t": float(i["t"])}
@@ -63,6 +72,20 @@ def _validate_telemetry(data):
                          if isinstance(i, dict) and i.get("type") in INPUT_TYPES
                          and i.get("source", "unknown") in INPUT_SOURCES and _number(i.get("t"))]
     return out
+
+
+def motion_state(samples):
+    """'walking', 'tilted' or 'still' from accelerometer samples in g (z is up when the head is upright)."""
+    if not samples or len(samples) < 5:
+        return None
+    mags = [math.sqrt(x * x + y * y + z * z) for _, x, y, z in samples]
+    mean_mag = sum(mags) / len(mags)
+    spread = math.sqrt(sum((m - mean_mag) ** 2 for m in mags) / len(mags))
+    zs = [z for *_, z in samples[-10:]]
+    z_mean = sum(zs) / len(zs)
+    tilt = math.degrees(math.acos(max(-1.0, min(1.0, z_mean / mean_mag)))) if mean_mag else 0.0
+    state = "walking" if spread > WALKING_SPREAD_G else "tilted" if tilt > TILTED_DEG else "still"
+    return {"state": state, "tilt_deg": round(tilt), "peak_g": round(max(mags), 2)}
 
 
 def imu_stats(samples):
@@ -180,6 +203,13 @@ class WearerStore:
             if key not in record and key in previous:
                 record[key] = previous[key]
         record["inputs"] = (previous.get("inputs", []) + position.get("inputs", []))[-MAX_INPUT_LOG:]
+        status = position.get("status", previous.get("status", "ok"))
+        record["status"] = status
+        record["status_since"] = previous.get("status_since", now) if status == previous.get("status") else now
+        if "ack" in position:
+            record["ack"] = {**position["ack"], "at": now}
+        elif "ack" in previous:
+            record["ack"] = previous["ack"]
         self.positions[device_id] = record
         return record
 
@@ -192,5 +222,6 @@ class WearerStore:
             item = {k: v for k, v in p.items() if k not in ("received_ts", "imu")}
             item["age_s"] = round(now - p["received_ts"], 1)
             item["imu"] = imu_stats(p.get("imu"))
+            item["motion"] = motion_state(p.get("imu"))
             out.append(item)
         return out

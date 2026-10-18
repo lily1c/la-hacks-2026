@@ -4,4 +4,4 @@ In glasses-app, run `npm ci`. Use `npm run use-backend -- https://firesight-dash
 
 The phone polls /latest and reports /g2/display. Check /g2/status while testing on physical glasses. Keep tokens out of commits and logs. SDK acceptance is not a screenshot of the physical display.
 
-Demo maps are optional; enable FIRESIGHT_DEMO_MAP only for an explicitly simulated demonstration. The image is labelled DEMO - NOT NAVIGATION. Wearer GPS is not implemented.
+Demo maps are optional; enable FIRESIGHT_DEMO_MAP only for an explicitly simulated demonstration. The image is labelled DEMO - NOT NAVIGATION. The glasses report the phone's GPS, IMU, button presses and device status to `POST /wearer` every 5 s (needs `VITE_G2_REPORT_TOKEN`). See [api-contracts.md](api-contracts.md).
