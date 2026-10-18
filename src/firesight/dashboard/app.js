@@ -338,3 +338,12 @@ function annRender(){
 }
 async function annPoll(){try{const r=await fetch(apiBase+'/annotations',{cache:'no-store',signal:AbortSignal.timeout(4000)});if(r.ok){annData=await r.json();annRender();}else if(r.status===404){$('annStatus').textContent='Annotations need the FastAPI backend (pip install -e .).';}}catch{}setTimeout(annPoll,1500);}
 annSetup();annPoll();
+
+// ---- G2 wearer: phone GPS reported by the glasses app (served by /wearer) ----
+const wearerMarkers=new Map();let wearerCentered=false;
+function wearerElement(id){const el=document.createElement('div');el.className='wearer-marker';el.title=`G2 wearer · ${id}`;el.innerHTML='<span></span><b>G2</b>';return el;}
+async function wearerPoll(){try{const r=await fetch(apiBase+'/wearer',{cache:'no-store',signal:AbortSignal.timeout(4000)});if(r.ok&&map&&glMod){const {wearers}=await r.json();const seen=new Set();
+for(const w of wearers){seen.add(w.device_id);const at=[w.lon,w.lat];let m=wearerMarkers.get(w.device_id);if(!m){m=new glMod.Marker({element:wearerElement(w.device_id)}).setLngLat(at).addTo(map);wearerMarkers.set(w.device_id,m);}else m.setLngLat(at);
+if(!wearerCentered){wearerCentered=true;map.easeTo({center:at});}}
+for(const [id,m] of wearerMarkers)if(!seen.has(id)){m.remove();wearerMarkers.delete(id);}}}catch{}finally{setTimeout(wearerPoll,2000);}}
+wearerPoll();
