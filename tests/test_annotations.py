@@ -87,7 +87,7 @@ class ServiceTests(unittest.IsolatedAsyncioTestCase):
     async def test_stale_frame_and_detector_errors_are_reported(self):
         service = AnnotationService(lambda: self.snapshot(age=120), lambda *a: [])
         service.configure(prompt="x")
-        self.assertIn("stale", (await service.run_once())["error"])
+        self.assertIn("120 s old", (await service.run_once())["error"])
         from firesight.analysis.gemini import GeminiConfigurationError
 
         def boom(*a): raise GeminiConfigurationError("Set GEMINI_API_KEY")
@@ -95,6 +95,15 @@ class ServiceTests(unittest.IsolatedAsyncioTestCase):
         service.configure(prompt="x")
         self.assertIn("GEMINI_API_KEY", (await service.run_once())["error"])
         self.assertFalse(service.busy)
+
+    async def test_stale_watcher_snapshot_falls_back_to_fresh_fetch(self):
+        fresh = self.snapshot()
+        fresh["frame_id"] = "fresh"
+        service = AnnotationService(lambda: self.snapshot(age=120), lambda *a: [], fetch_fresh=lambda: fresh)
+        service.configure(prompt="x")
+        state = await service.run_once()
+        self.assertIsNone(state["error"])
+        self.assertEqual(state["frame_id"], "fresh")
 
     async def test_auto_loop_annotates_each_frame_once(self):
         calls = []

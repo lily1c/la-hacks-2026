@@ -84,11 +84,22 @@ def _create_watcher():
     )
 
 
+def _fetch_fresh_frame():
+    """Newest Beagle frame straight from the broadcaster, bypassing the watcher's (possibly busy) analysis loop."""
+    watcher = app.state.watcher
+    data = watcher.fetch() if hasattr(watcher, "fetch") else None
+    if not data:
+        return None
+    metadata = data["metadata"]
+    return {"frame_id": metadata["frame_id"], "metadata": metadata, "image": "data:image/jpeg;base64," + data["jpeg_base64"]}
+
+
 if _HAS_FASTAPI:
     @asynccontextmanager
     async def lifespan(app):
         app.state.watcher = _create_watcher()
-        app.state.annotations = AnnotationService(lambda: getattr(app.state.watcher, "snapshot", None))
+        app.state.annotations = AnnotationService(
+            lambda: getattr(app.state.watcher, "snapshot", None), fetch_fresh=_fetch_fresh_frame)
         tasks = [asyncio.create_task(app.state.watcher.run()), asyncio.create_task(app.state.annotations.run())]
         try:
             yield

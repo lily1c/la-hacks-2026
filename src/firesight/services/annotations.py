@@ -11,8 +11,10 @@ MAX_FRAME_AGE_S = 30
 
 
 class AnnotationService:
-    def __init__(self, get_snapshot, detect=detect_with_gemini):
-        self.get_snapshot, self.detect = get_snapshot, detect
+    def __init__(self, get_snapshot, detect=detect_with_gemini, fetch_fresh=None):
+        # get_snapshot: newest frame the watcher has seen. It goes stale while the watcher is busy analyzing,
+        # so fetch_fresh (optional) pulls the newest frame straight from the source instead.
+        self.get_snapshot, self.detect, self.fetch_fresh = get_snapshot, detect, fetch_fresh
         self.prompt, self.auto, self.interval_s = "", False, 3.0
         self.annotations, self.error = [], None
         self.busy, self.latency_ms, self.updated, self.last_frame = False, None, None, None
@@ -45,19 +47,40 @@ class AnnotationService:
                 "updated": self.updated, "frame_id": self.frame_id, "runs": self.runs,
                 "kinds": KINDS, "annotations": live}
 
-    async def run_once(self):
+    @staticmethod
+    def _age(snap):
+        try:
+            return time.time() - float(snap["metadata"]["telemetry"]["timestamp"])
+        except (KeyError, TypeError, ValueError):
+            return float("inf")
+
+    async def _newest_snapshot(self):
+        snap = self.get_snapshot()
+        if (not snap or self._age(snap) > MAX_FRAME_AGE_S) and self.fetch_fresh:
+            try:
+                fresh = await asyncio.to_thread(self.fetch_fresh)
+            except Exception:
+                fresh = None
+            if fresh and (not snap or self._age(fresh) < self._age(snap)):
+                snap = fresh
+        return snap
+
+    async def run_once(self, only_new=False):
         if self.busy:
             return self.state()
         if not self.prompt:
             self.error = "Enter what to annotate first"
             return self.state()
-        snap = self.get_snapshot()
+        snap = await self._newest_snapshot()
         if not snap or not snap.get("image"):
             self.error = "No frame yet. Waiting for Beagle Eyes."
             return self.state()
         metadata = snap["metadata"]
-        if time.time() - float(metadata["telemetry"].get("timestamp", 0)) > MAX_FRAME_AGE_S:
-            self.error = "Latest frame is stale"
+        if only_new and snap["frame_id"] == self.last_frame:
+            return self.state()
+        age = self._age(snap)
+        if age > MAX_FRAME_AGE_S:
+            self.error = f"Latest Beagle Eyes frame is {age:.0f} s old. Is the video stream still running?"
             return self.state()
         self.busy, self.error = True, None
         started = time.perf_counter()
@@ -82,10 +105,9 @@ class AnnotationService:
         """Background loop: when auto is on, annotate each new frame at most every interval_s."""
         while True:
             try:
-                snap = self.get_snapshot()
-                if self.auto and self.prompt and not self.busy and snap and snap["frame_id"] != self.last_frame:
+                if self.auto and self.prompt and not self.busy:
                     started = time.time()
-                    await self.run_once()
+                    await self.run_once(only_new=True)
                     await asyncio.sleep(max(0.0, self.interval_s - (time.time() - started)))
             except Exception as error:  # keep the loop alive
                 self.error = f"{type(error).__name__}: {error}"
