@@ -7,6 +7,7 @@ import hmac
 from datetime import datetime, timezone
 from pydantic import BaseModel, Field
 import os
+import re
 import tempfile
 from pathlib import Path
 
@@ -99,16 +100,20 @@ async def get_latest():
         alert = latest_alert
     if os.getenv("FIRESIGHT_DEMO_MAP") == "true":
         # Placeholder map for demos; the glasses re-download it only when map_url changes.
-        alert = {**alert, "map_url": f"/view.png?v={alert['id']}"}
+        # Place the map's fire in the sector the detector reported, e.g. "Check upper-left frame sector".
+        matches = (re.match(r"Check (.+) frame sector", line) for line in alert["instructions"])
+        match = next((m for m in matches if m), None)
+        direction = f"&dir={match.group(1)}" if match else "&dir=none"
+        alert = {**alert, "map_url": f"/view.png?v={alert['id']}{direction}"}
     return JSONResponse(content=alert)
 
 
 @app.get("/view.png")
-async def get_view(v: str = ""):
-    """Placeholder tactical map; the fire's size and position are seeded by v."""
+async def get_view(v: str = "", dir: str = ""):
+    """Placeholder tactical map; fire placed in the reported sector, details seeded by v."""
     if os.getenv("FIRESIGHT_DEMO_MAP") != "true":
         return Response(status_code=404)
-    return Response(content=await asyncio.to_thread(render_map, v), media_type="image/png")
+    return Response(content=await asyncio.to_thread(render_map, v, dir or None), media_type="image/png")
 
 
 class G2DisplayReport(BaseModel):
