@@ -26,3 +26,27 @@ small,.label{letter-spacing:0;text-transform:none}
 #position{font-family:var(--font-data);letter-spacing:-.5px}
 .display{font-size:12px;line-height:1.8;letter-spacing:0}
 button{font-weight:500;letter-spacing:-.1px}
+
+/* Soft, layered field-console surfaces. */
+:root{--panel-edge:#ffffffd9;--panel-shadow:0 14px 42px #243a2a1c,0 2px 8px #243a2a0c;--panel-blur:blur(22px) saturate(1.18)}
+header,.titlebar,.card,.meters{border-color:var(--panel-edge);box-shadow:var(--panel-shadow);backdrop-filter:var(--panel-blur)}
+header{border-radius:18px}
+.titlebar,.card{border-radius:18px}
+.titlebar{padding:20px 22px}
+.cardhead{padding:16px 18px}
+.cardfoot{font-size:11px}
+.maphead{backdrop-filter:blur(18px) saturate(1.15)}
+.chip{border-radius:10px;backdrop-filter:blur(18px) saturate(1.15)}
+.meters{gap:1px;border-radius:18px;background:#d7e1d5cc}
+.meters div:first-child{border-radius:17px 0 0 17px}
+.meters div:last-child{border-radius:0 17px 17px 0}
+button{transition:background-color .18s ease,border-color .18s ease,box-shadow .18s ease,transform .18s ease}
+button:hover{transform:translateY(-1px);box-shadow:0 5px 14px #29473715}
+.status:before{color:#4c9b6c}
+.video{background:radial-gradient(ellipse at 50% 115%,#d8e4d5,#edf2e9 72%)}
+.display{border-radius:0 0 17px 17px}
+.mapactions{display:flex;gap:8px}
+.mapactions button{font-size:11px;padding:9px 12px;border-radius:11px;background:#fffdf3ed;border-color:#ffffffdb;backdrop-filter:blur(14px)}
+#imagery[aria-pressed="true"]{background:#385f4e;color:#fff;border-color:#385f4e}
+button:disabled{opacity:.55;cursor:wait;transform:none}
+@media(max-width:640px){.titlebar{padding:13px}.card,.titlebar{border-radius:15px}.meters div:first-child{border-radius:14px 0 0 14px}.meters div:last-child{border-radius:0 14px 14px 0}}
