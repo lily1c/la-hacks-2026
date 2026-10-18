@@ -1,0 +1,3 @@
+[submodule "vendor/beagle_eyes"]
+	path = vendor/beagle_eyes
+	url = https://github.com/sangregoriokimpo/beagle_eyes
